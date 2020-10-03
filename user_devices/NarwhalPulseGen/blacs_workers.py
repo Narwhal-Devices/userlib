@@ -20,8 +20,9 @@ class NarwhalPulseGenWorker(Worker):
         self.ser.port = self.usbport
         self.ser.timeout = 0            #non blocking read
         self.ser.writeTimeout = 2     #timeout for write
-        self.connect()
-        self._confirm_communications()
+        print('blasc_worker: Not actually connecting because I dont need to yet')
+        # self.connect()
+        # self._confirm_communications()
 
     def connect(self):
         comports = list(serial.tools.list_ports.comports())

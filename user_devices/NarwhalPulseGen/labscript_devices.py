@@ -25,11 +25,13 @@ class NarwhalPulseGen(PseudoclockDevice):
     wait_delay = trigger_delay
     allowed_children = [NarwhalPulseGenPseudoclock]
     max_instructions = 8192
+    n_channels = 24
 
     @set_passed_properties(property_names = {
-        'connection_table_properties': ['usbport']}
+        'connection_table_properties': ['usbport'],
+        'device_properties': ['pulse_width']}
         )  
-    def __init__(self, name='narwhal_pulsegen', usbport='autodetect', **kwargs):
+    def __init__(self, name='narwhal_pulsegen', usbport='autodetect', pulse_width='symmetric', **kwargs):
         self.BLACS_connection = usbport
         PseudoclockDevice.__init__(self, name, None, None, **kwargs)
         # Create the internal pseudoclock
@@ -83,130 +85,82 @@ class NarwhalPulseGen(PseudoclockDevice):
         self.write_npg_inst_to_h5(npg_inst, hdf5_file)
 
     def convert_to_npg_inst(self, dig_outputs):
-        '''
-        The format of the instructions will be a list of dictionaries, each dictioaty will be an instruction
-        Its index in the list will be its address.
-        The instruction dictionary will have the format:
-        instr = {'state'=array(24 ints), 'duration'=1, 'goto_address'=0, 'goto_counter'=0, 'stop_and_wait'=False, 'hardware_trig_out'=False, 'notify_computer'=False, 'powerline_sync'=False}
-        in the state array, the index corresponds to the main output number.
-        the values can be 0=low, 1=high, 2=set_by_blacs (usually for channels that aren't switching)
-        '''
-
-        '''
-        What would I do:
-        Get a pen and paper and write it out.
-
-        
-        '''
-        # Create the initial state for all the outputs (it will be needed for any undefined channels)
-        # last_state = 2*np.ones(24, dtype=uint8)
-
-        # raw_output_ctr = 0
-        # for k, instruction in enumerate(self.pseudoclock.clock):
-        #     # If the direct output clock line is active, update the outputs for all direct output channels, and increment raw_output counter
-
-        #     for clock_line in instruction['enabled_clocks']:
-        #         if clock_line == self._direct_output_clock_line: 
-        #             # advance i (the index keeping track of internal clockline output)
-        #             raw_output_ctr += 1
-        #         else:
-        #             flag_index = int(clock_line.connection.split()[1])
-        #             flags[flag_index] = 1
-        #             # We are not just using the internal clock line
-        #             only_internal = False
-
-        #     # print(k, instruction)
-        #     # print(instruction['enabled_clocks'])
-        #     print([clockline.name for clockline in instruction['enabled_clocks']])
-        #     print(instruction)
-        #     print()
-        # i=0
-
-        # print(dig_outputs)
         # for attr in dir(dig_outputs[0]):
         #     print('obj.%s = %r'%(attr, getattr(dig_outputs[0], attr)))
 
         # for attr in dir(self._direct_output_clock_line):
         #     print('obj.%s = %r'%(attr, getattr(self._direct_output_clock_line, attr)))
 
-         pb_inst = []
+        npg_inst = []
         
         # index to keep track of where in output.raw_output the
-        # pulseblaster flags are coming from
+        # pulseblaster channels are coming from
         # starts at -1 because the internal flag should always tick on the first instruction and be 
         # incremented (to 0) before it is used to index any arrays
-        i = -1 
-        # index to record what line number of the pulseblaster hardware
-        # instructions we're up to:
-        j = 0
-        flags = [0]*self.n_flags
+        raw_output_idx = -1 
+
+        # Create the initial state for all the outputs (it will be needed for any undefined channels)
+        channels = [2]*self.n_channels    # 2 will specify that the flag should take the value from blacs at runtime
  
-        flagstring = '0'*self.n_flags # So that this variable is still defined if the for loop has no iterations
+        # flagstring = '0'*self.n_flags # So that this variable is still defined if the for loop has no iterations
         for k, instruction in enumerate(self.pseudoclock.clock):
-            flags = [0]*self.n_flags
+            channels = [2]*self.n_channels
 
             # This flag indicates whether we need a full clock tick, or are just updating an internal output
             only_internal = True
             # find out which clock flags are ticking during this instruction
             for clock_line in instruction['enabled_clocks']:
                 if clock_line == self._direct_output_clock_line: 
-                    # advance i (the index keeping track of internal clockline output)
-                    i += 1
+                    # advance raw_output_idx (the index keeping track of internal clockline output)
+                    raw_output_idx += 1
                 else:
-                    flag_index = int(clock_line.connection.split()[1])
-                    flags[flag_index] = 1
+                    channel_index = int(clock_line.connection.split()[1]) 
+                    channels[channel_index] = 1
                     # We are not just using the internal clock line
                     only_internal = False
             
+            # Set all the digital outputs to their value specified by raw_outputs
             for output in dig_outputs:
-                flagindex = int(output.connection.split()[1])
-                flags[flagindex] = int(output.raw_output[i])
+                channel_index = int(output.connection.split()[1])
+                channels[channel_index] = int(output.raw_output[raw_output_idx])
             
-            if not only_internal:
+            if only_internal:
+                # Just flipping any direct_outputs that need flipping, and holding that state for the required step time
+                npg_inst.append({'channels': channels, 'duration':instruction['step'], 'goto_address':0, 'goto_counter':0,
+                                'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
+            else:
+                # the pseudoinstruction calls for us to make a pulse. So on the required channels, you need to go high, then low, and loop back to high for the required number of repetitions
                 if self.pulse_width == 'symmetric':
                     high_time = instruction['step']/2
                 else:
                     high_time = self.pulse_width
 
-                high_time = min(high_time, self.long_delay)
+                # Tick high
+                npg_inst.append({'channels': channels, 'duration':high_time, 'goto_address':0, 'goto_counter':0,
+                                'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
 
                 # Low time is whatever is left:
                 low_time = instruction['step'] - high_time
 
-                # The start loop instruction, Clock edges are high:
-                pb_inst.append({'freqs': freqregs, 'amps': ampregs, 'phases': phaseregs, 'enables':dds_enables, 'phase_resets':phase_resets,
-                                'flags': flags, 'instruction': 'LOOP',
-                                'data': instruction['reps'], 'delay': high_time*1e9})
-                
+                # Any enabled clocklines (that are not _direct_output_clockline) now needs to go low, so set these channels to 0
                 for clock_line in instruction['enabled_clocks']:
                     if clock_line != self._direct_output_clock_line:
-                        flag_index = int(clock_line.connection.split()[1])
-                        flags[flag_index] = 0
-                        
-                     
-                # Remaining low time. Clock edges are low:
-                pb_inst.append({'freqs': freqregs, 'amps': ampregs, 'phases': phaseregs, 'enables':dds_enables, 'phase_resets':phase_resets,
-                                'flags': flags, 'instruction': 'END_LOOP',
-                                'data': j, 'delay': remaining_low_time*1e9})
-            else:
-                # We only need to update a direct output, so no need to tick the clocks.
-                pb_inst.append({'freqs': freqregs, 'amps': ampregs, 'phases': phaseregs, 'enables':dds_enables, 'phase_resets':phase_resets,
-                                'flags': flags, 'instruction': 'CONTINUE',
-                                'data': 0, 'delay': remaining_delay*1e9})
-                
-                j += 2 if n_long_delays else 1
-                
+                        channel_index = int(clock_line.connection.split()[1])
+                        channels[channel_index] = 0
 
-
+                # Tock low
+                goto_address = len(npg_inst) #loop back to the last instruction
+                npg_inst.append({'channels': channels, 'duration':low_time, 'goto_address':goto_address, 'goto_counter':instruction['reps'],
+                                'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
         return npg_instr
 
-    def write_npg_inst_to_h5(self, pb_inst, hdf5_file):
-        pb_inst_table = np.empty(len(pb_inst),dtype = np.int)
-        for i,inst in enumerate(pb_inst):
-            pb_inst_table[i] = ((0, 0, 0, 0))
+    def write_npg_inst_to_h5(self, npg_inst, hdf5_file):
+        npg_inst_table = np.empty(len(npg_inst),dtype = np.int)
+        for i, inst in enumerate(npg_inst):
+            npg_inst_table[i] = ((0, 0, 0, 0))
         # Okay now write it to the file: 
         group = hdf5_file['/devices/'+self.name]  
-        group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = pb_inst_table)   
+        group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = npg_inst_table)   
         self.set_property('stop_time', 696969, location='device_properties')
 
 class NarwhalPulseGenDirectOutputs(IntermediateDevice):
