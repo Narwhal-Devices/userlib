@@ -33,6 +33,7 @@ class NarwhalPulseGen(PseudoclockDevice):
         )  
     def __init__(self, name='narwhal_pulsegen', usbport='autodetect', pulse_width='symmetric', **kwargs):
         self.BLACS_connection = usbport
+        self.pulse_width = pulse_width
         PseudoclockDevice.__init__(self, name, None, None, **kwargs)
         # Create the internal pseudoclock
         self._pseudoclock = NarwhalPulseGenPseudoclock(
@@ -152,16 +153,43 @@ class NarwhalPulseGen(PseudoclockDevice):
                 goto_address = len(npg_inst) #loop back to the last instruction
                 npg_inst.append({'channels': channels, 'duration':low_time, 'goto_address':goto_address, 'goto_counter':instruction['reps'],
                                 'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
-        return npg_instr
+        return npg_inst
 
     def write_npg_inst_to_h5(self, npg_inst, hdf5_file):
-        npg_inst_table = np.empty(len(npg_inst),dtype = np.int)
-        for i, inst in enumerate(npg_inst):
-            npg_inst_table[i] = ((0, 0, 0, 0))
+        # OK now we squeeze the instructions into a numpy array ready for writing to hdf5:
+        pb_dtype = [('freq0', np.int32), ('phase0', np.int32), ('amp0', np.int32), 
+                    ('dds_en0', np.int32), ('phase_reset0', np.int32),
+                    ('freq1', np.int32), ('phase1', np.int32), ('amp1', np.int32),
+                    ('dds_en1', np.int32), ('phase_reset1', np.int32),
+                    ('flags', np.int32), ('inst', np.int32),
+                    ('inst_data', np.int32), ('length', np.float64)]
+        pb_inst_table = np.empty(len(npg_inst),dtype = pb_dtype)
+        print(type(pb_inst_table))
+        print(pb_inst_table.dtype)
+        
+        for i,inst in enumerate(npg_inst):
+            flagint = int(inst['flags'][::-1],2)
+            instructionint = self.pb_instructions[inst['instruction']]
+            dataint = inst['data']
+            delaydouble = inst['delay']
+            freq0 = inst['freqs'][0]
+            freq1 = inst['freqs'][1]
+            phase0 = inst['phases'][0]
+            phase1 = inst['phases'][1]
+            amp0 = inst['amps'][0]
+            amp1 = inst['amps'][1]
+            en0 = inst['enables'][0]
+            en1 = inst['enables'][1]
+            phase_reset0 = inst['phase_resets'][0]
+            phase_reset1 = inst['phase_resets'][1]
+            
+            pb_inst_table[i] = (freq0,phase0,amp0,en0,phase_reset0,freq1,phase1,amp1,en1,phase_reset1, flagint, 
+                                instructionint, dataint, delaydouble)     
+                                
         # Okay now write it to the file: 
         group = hdf5_file['/devices/'+self.name]  
-        group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = npg_inst_table)   
-        self.set_property('stop_time', 696969, location='device_properties')
+        group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = pb_inst_table)   
+        self.set_property('stop_time', self.stop_time, location='device_properties')
 
 class NarwhalPulseGenDirectOutputs(IntermediateDevice):
     description = 'Narwhal Devices Pulse Generator - IntermediateDevice. The parent of any direct DigitalOut devices'
