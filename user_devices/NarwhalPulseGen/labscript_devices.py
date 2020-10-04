@@ -157,12 +157,13 @@ class NarwhalPulseGen(PseudoclockDevice):
 
     def write_npg_inst_to_h5(self, npg_inst, hdf5_file):
         # OK now we squeeze the instructions into a numpy array ready for writing to hdf5:
-        pb_dtype = [('freq0', np.int32), ('phase0', np.int32), ('amp0', np.int32), 
-                    ('dds_en0', np.int32), ('phase_reset0', np.int32),
-                    ('freq1', np.int32), ('phase1', np.int32), ('amp1', np.int32),
-                    ('dds_en1', np.int32), ('phase_reset1', np.int32),
-                    ('flags', np.int32), ('inst', np.int32),
-                    ('inst_data', np.int32), ('length', np.float64)]
+        npg_dtype = [('duration', np.int64), ('goto_address', np.int64), ('goto_counter', np.int64),
+                     ('stop_and_wait', np.bool), ('hardware_trig_out', np.bool), ('notify_computer', np.bool), ('powerline_sync', np.bool)]
+
+                                'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False
+                npg_inst.append({'channels': channels, 'duration':high_time, 'goto_address':0, 'goto_counter':0,
+                                'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
+
         pb_inst_table = np.empty(len(npg_inst),dtype = pb_dtype)
         # print(type(pb_inst_table))
         # print(pb_inst_table.dtype)
