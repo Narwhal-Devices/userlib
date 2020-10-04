@@ -164,27 +164,27 @@ class NarwhalPulseGen(PseudoclockDevice):
                     ('flags', np.int32), ('inst', np.int32),
                     ('inst_data', np.int32), ('length', np.float64)]
         pb_inst_table = np.empty(len(npg_inst),dtype = pb_dtype)
-        print(type(pb_inst_table))
-        print(pb_inst_table.dtype)
+        # print(type(pb_inst_table))
+        # print(pb_inst_table.dtype)
         
-        for i,inst in enumerate(npg_inst):
-            flagint = int(inst['flags'][::-1],2)
-            instructionint = self.pb_instructions[inst['instruction']]
-            dataint = inst['data']
-            delaydouble = inst['delay']
-            freq0 = inst['freqs'][0]
-            freq1 = inst['freqs'][1]
-            phase0 = inst['phases'][0]
-            phase1 = inst['phases'][1]
-            amp0 = inst['amps'][0]
-            amp1 = inst['amps'][1]
-            en0 = inst['enables'][0]
-            en1 = inst['enables'][1]
-            phase_reset0 = inst['phase_resets'][0]
-            phase_reset1 = inst['phase_resets'][1]
+        # for i,inst in enumerate(npg_inst):
+        #     flagint = int(inst['flags'][::-1],2)
+        #     instructionint = self.pb_instructions[inst['instruction']]
+        #     dataint = inst['data']
+        #     delaydouble = inst['delay']
+        #     freq0 = inst['freqs'][0]
+        #     freq1 = inst['freqs'][1]
+        #     phase0 = inst['phases'][0]
+        #     phase1 = inst['phases'][1]
+        #     amp0 = inst['amps'][0]
+        #     amp1 = inst['amps'][1]
+        #     en0 = inst['enables'][0]
+        #     en1 = inst['enables'][1]
+        #     phase_reset0 = inst['phase_resets'][0]
+        #     phase_reset1 = inst['phase_resets'][1]
             
-            pb_inst_table[i] = (freq0,phase0,amp0,en0,phase_reset0,freq1,phase1,amp1,en1,phase_reset1, flagint, 
-                                instructionint, dataint, delaydouble)     
+        #     pb_inst_table[i] = (freq0,phase0,amp0,en0,phase_reset0,freq1,phase1,amp1,en1,phase_reset1, flagint, 
+        #                         instructionint, dataint, delaydouble)     
                                 
         # Okay now write it to the file: 
         group = hdf5_file['/devices/'+self.name]  
