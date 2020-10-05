@@ -9,7 +9,6 @@ labscript_utils.import_or_reload('labscriptlib.example_apparatus.connection_tabl
 t = 0
 add_time_marker(t, "Start", verbose=True)
 start()
-
 # Wait for 1 second with all devices in their default state
 t += 1
 

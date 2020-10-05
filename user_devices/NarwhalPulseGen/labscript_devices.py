@@ -81,11 +81,18 @@ class NarwhalPulseGen(PseudoclockDevice):
         # Generate the hardware instructions
         hdf5_file.create_group('/devices/' + self.name)
         PseudoclockDevice.generate_code(self, hdf5_file)
-        dig_outputs = self.direct_outputs.get_all_outputs()
-        npg_inst = self.convert_to_npg_inst(dig_outputs)
+        npg_inst = self.pseudo_inst_to_npg_inst()
         self.write_npg_inst_to_h5(npg_inst, hdf5_file)
 
-    def convert_to_npg_inst(self, dig_outputs):
+    def sec_to_cyc(self, object_in_seconds):
+        if isinstance(object_in_seconds, list):
+            return [int(round(element/self.cycle_period)) for element in object_in_seconds]
+        elif isinstance(object_in_seconds, tuple):  
+            return (int(round(element/self.cycle_period)) for element in object_in_seconds)
+        return int(round(object_in_seconds/self.cycle_period))
+
+    def pseudo_inst_to_npg_inst(self):
+        dig_outputs = self.direct_outputs.get_all_outputs()
         # for attr in dir(dig_outputs[0]):
         #     print('obj.%s = %r'%(attr, getattr(dig_outputs[0], attr)))
 
@@ -100,13 +107,10 @@ class NarwhalPulseGen(PseudoclockDevice):
         # incremented (to 0) before it is used to index any arrays
         raw_output_idx = -1 
 
-        # Create the initial state for all the outputs (it will be needed for any undefined channels)
-        channels = [2]*self.n_channels    # 2 will specify that the flag should take the value from blacs at runtime
- 
         # flagstring = '0'*self.n_flags # So that this variable is still defined if the for loop has no iterations
+        channels = [2]*self.n_channels # 2 will specify that the flag should take the value from blacs at runtime
         for k, instruction in enumerate(self.pseudoclock.clock):
-            channels = [2]*self.n_channels
-
+            print(instruction)
             # This flag indicates whether we need a full clock tick, or are just updating an internal output
             only_internal = True
             # find out which clock flags are ticking during this instruction
@@ -127,21 +131,22 @@ class NarwhalPulseGen(PseudoclockDevice):
             
             if only_internal:
                 # Just flipping any direct_outputs that need flipping, and holding that state for the required step time
-                npg_inst.append({'channels': channels, 'duration':instruction['step'], 'goto_address':0, 'goto_counter':0,
+                npg_inst.append({'channels': channels.copy(), 'duration':self.sec_to_cyc(instruction['step']), 'goto_address':0, 'goto_counter':0,
                                 'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
             else:
                 # the pseudoinstruction calls for us to make a pulse. So on the required channels, you need to go high, then low, and loop back to high for the required number of repetitions
                 if self.pulse_width == 'symmetric':
-                    high_time = instruction['step']/2
+                    high_time = self.sec_to_cyc(instruction['step']/2)
                 else:
-                    high_time = self.pulse_width
+                    high_time = self.sec_to_cyc(self.pulse_width)
 
                 # Tick high
-                npg_inst.append({'channels': channels, 'duration':high_time, 'goto_address':0, 'goto_counter':0,
+                print(channels)
+                npg_inst.append({'channels': channels.copy(), 'duration':high_time, 'goto_address':0, 'goto_counter':0,
                                 'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
 
                 # Low time is whatever is left:
-                low_time = instruction['step'] - high_time
+                low_time = self.sec_to_cyc(instruction['step']) - high_time
 
                 # Any enabled clocklines (that are not _direct_output_clockline) now needs to go low, so set these channels to 0
                 for clock_line in instruction['enabled_clocks']:
@@ -150,8 +155,8 @@ class NarwhalPulseGen(PseudoclockDevice):
                         channels[channel_index] = 0
 
                 # Tock low
-                goto_address = len(npg_inst) #loop back to the last instruction
-                npg_inst.append({'channels': channels, 'duration':low_time, 'goto_address':goto_address, 'goto_counter':instruction['reps'],
+                goto_address = len(npg_inst)-1 #loop back to the last instruction (this is ignored by hardware is goto_counter==0)
+                npg_inst.append({'channels': channels.copy(), 'duration':low_time, 'goto_address':goto_address, 'goto_counter':instruction['reps']-1,
                                 'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
         return npg_inst
 
@@ -159,37 +164,20 @@ class NarwhalPulseGen(PseudoclockDevice):
         # OK now we squeeze the instructions into a numpy array ready for writing to hdf5:
         npg_dtype = [('duration', np.int64), ('goto_address', np.int64), ('goto_counter', np.int64),
                      ('stop_and_wait', np.bool), ('hardware_trig_out', np.bool), ('notify_computer', np.bool), ('powerline_sync', np.bool)]
+        npg_dtype.extend([('channel {}'.format(ch), np.int8) for ch in range(self.n_channels)])
+        npg_inst_table = np.empty(len(npg_inst),dtype = npg_dtype)
 
-                                'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False
-                npg_inst.append({'channels': channels, 'duration':high_time, 'goto_address':0, 'goto_counter':0,
-                                'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
-
-        pb_inst_table = np.empty(len(npg_inst),dtype = pb_dtype)
-        # print(type(pb_inst_table))
-        # print(pb_inst_table.dtype)
         
-        # for i,inst in enumerate(npg_inst):
-        #     flagint = int(inst['flags'][::-1],2)
-        #     instructionint = self.pb_instructions[inst['instruction']]
-        #     dataint = inst['data']
-        #     delaydouble = inst['delay']
-        #     freq0 = inst['freqs'][0]
-        #     freq1 = inst['freqs'][1]
-        #     phase0 = inst['phases'][0]
-        #     phase1 = inst['phases'][1]
-        #     amp0 = inst['amps'][0]
-        #     amp1 = inst['amps'][1]
-        #     en0 = inst['enables'][0]
-        #     en1 = inst['enables'][1]
-        #     phase_reset0 = inst['phase_resets'][0]
-        #     phase_reset1 = inst['phase_resets'][1]
-            
-        #     pb_inst_table[i] = (freq0,phase0,amp0,en0,phase_reset0,freq1,phase1,amp1,en1,phase_reset1, flagint, 
-        #                         instructionint, dataint, delaydouble)     
+        for i, inst in enumerate(npg_inst):
+            flat_instr = [inst['duration'], inst['goto_address'], inst['goto_counter'], 
+                          inst['stop_and_wait'], inst['hardware_trig_out'], inst['notify_computer'], inst['powerline_sync']]  
+            flat_instr.extend(inst['channels'])
+            print(flat_instr)
+            npg_inst_table[i] = tuple(flat_instr)
                                 
         # Okay now write it to the file: 
         group = hdf5_file['/devices/'+self.name]  
-        group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = pb_inst_table)   
+        group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = npg_inst_table)   
         self.set_property('stop_time', self.stop_time, location='device_properties')
 
 class NarwhalPulseGenDirectOutputs(IntermediateDevice):
