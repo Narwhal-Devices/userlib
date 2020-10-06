@@ -111,6 +111,14 @@ class NarwhalPulseGen(PseudoclockDevice):
         channels = [2]*self.n_channels # 2 will specify that the flag should take the value from blacs at runtime
         for k, instruction in enumerate(self.pseudoclock.clock):
             print(instruction)
+            if instruction == 'WAIT':
+                # This is a wait pseudoinstruction. For the narwhal pulsegen, any instuction can contain a wait tag. Just add
+                # a wait tag to the last instruction. That instuction is executed, and then the clock pauses just before the next instruction. 
+                if len(npg_inst) > 0:
+                    npg_inst[-1]['stop_and_wait'] = True
+                else:
+                    raise LabscriptError(f'You tried to make \"WAIT\" at the very start of execution time')
+                continue
             # This flag indicates whether we need a full clock tick, or are just updating an internal output
             only_internal = True
             # find out which clock flags are ticking during this instruction
@@ -179,6 +187,7 @@ class NarwhalPulseGen(PseudoclockDevice):
         group = hdf5_file['/devices/'+self.name]  
         group.create_dataset('PULSE_PROGRAM', compression=config.compression,data = npg_inst_table)   
         self.set_property('stop_time', self.stop_time, location='device_properties')
+
 
 class NarwhalPulseGenDirectOutputs(IntermediateDevice):
     description = 'Narwhal Devices Pulse Generator - IntermediateDevice. The parent of any direct DigitalOut devices'

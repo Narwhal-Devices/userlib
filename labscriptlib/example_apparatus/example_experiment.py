@@ -1,4 +1,4 @@
-from labscript import start, stop, add_time_marker
+from labscript import start, stop, add_time_marker, wait
 import labscript_utils
 
 labscript_utils.import_or_reload('labscriptlib.example_apparatus.connection_table')
@@ -19,6 +19,10 @@ digital_out2.go_high(t)
 # Wait for 0.5 seconds
 t += 0.5
 digital_out2.go_low(t)
+# t += wait('my_test_wait', t, timeout = 5) #Hmmm, not quite sure how labscript wants waits to be treated. Do they
+t += 0.0033
+t += wait('my_test_wait', t, timeout = 5)
+t += 0.0044
 
 # Ramp analog_out from 0.0 V to 1.0 V over 0.25 s with a 1 kS/s sample rate
 t += analog_out.ramp(t=t, initial=0.0, final=1.0, duration=0.25, samplerate=1e3)
