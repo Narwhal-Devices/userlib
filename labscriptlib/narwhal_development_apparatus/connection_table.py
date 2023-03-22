@@ -1,33 +1,28 @@
 from labscript import start, stop, add_time_marker, AnalogOut, DigitalOut, ClockLine, wait
-from labscript_devices.DummyIntermediateDevice import DummyIntermediateDevice
-# from labscript_devices.DummyIntermediateDevice import NI_PCIe_6363, 
+from user_devices.NarwhalPulseGenPulseblasterTemplate.labscript_devices import PulseBlasterUSB
 
-from user_devices.NarwhalPulseGen.labscript_devices import NarwhalPulseGen
+PulseBlasterUSB(name='my_test_pulseblaster')
 
-NarwhalPulseGen(name='narwhal_pulsegen', usbport='autodetect')
+ClockLine(name='narwhalpulsegen_clock1', pseudoclock=my_test_pulseblaster.pseudoclock, connection='flag 0')
 
-DigitalOut(name='digital_out1', parent_device=narwhal_pulsegen.direct_outputs, connection='channel 1')
-DigitalOut(name='digital_out2', parent_device=narwhal_pulsegen.direct_outputs, connection='channel 2')
+'''Im not sure if this is allowed. I think a Pulseblaster is only allowed to have pseudoclock children
+To create digital outs, I might have to make a PulseBlasterDirectOutputs device (which is an IntermediateDevice),
+and then make DigitalOut with PulseBlasterDirectOutputs as a parent.
+OR...
+It is possible that when I call DigitalOut with a my_test_pulseblaster.direct_outputs parent, that the IntermediateDevice
+gets automatically created. (This would make sence, and be convenient, but what magic makes this happen I dont know.)
 
-ClockLine(name='narwhalpulsegen_clock1', pseudoclock=narwhal_pulsegen.pseudoclock, connection='channel 0')
+ANSWER:
+The my_test_pulseblaster.direct_outputs IS AN INTEMEDIATE DEVICE
+look at the labscript_devices.py file. direct_outputs is a property that returns self._direct_output_device, 
+which is just an instance of PulseBlasterDirectOutputs, which itself is just a subclass of IntermediateDevice, with a 
+couple of extra things thrown in.
 
-DummyIntermediateDevice(name='intermediate_device', parent_device=narwhalpulsegen_clock1)
-AnalogOut(name='analog_out', parent_device=intermediate_device, connection='ao0')
+'''
+DigitalOut(name='digital_out1', parent_device=my_test_pulseblaster.direct_outputs, connection='flag 1')
+DigitalOut(name='digital_out2', parent_device=my_test_pulseblaster.direct_outputs, connection='flag 2')
 
 
-# NI_PCIe_6363 ( name =’ ni_pcie_6363_0 ’,
-# parent_device = pineblaster0 . clockline ,
-# clock_terminal =’/ ni_pcie_6363_0 / PFI0 ’,
-# MAX_name =’ ni_pcie_6363_0 ’,
-# acquisition_rate =1e3)
-# WaitMonitor (’ wait_monitor ’,
-# # flag that pulses after a wait
-# ni_pcie_6363_0 , ’port0 / line0 ’,
-# # counter that monitors the times the above flag goes high
-# ni_pcie_6363_0 , ’ctr0 ’,
-# # software timed output that retriggers the master
-# # pseudoclock if the wait hits the timeout
-# ni_pcie_6363_0 , ’PFI1 ’)
 
 if __name__ == '__main__':
     # Begin issuing labscript primitives

@@ -1,0 +1,6 @@
+The file in labscript_devices or user_devices:
+	This Python file then contains, at a minimum, four Python classes: one for the labscript API, BLACS GUI, BLACS worker process, and runviewer.
+
+ The four classes must be registered with the labscript suite using class
+decorators [159] which can be imported from labscript_devices: @labscript_device,
+@BLACS_tab, @BLACS_worker, and @runviewer_parser
