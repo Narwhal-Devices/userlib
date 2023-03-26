@@ -23,7 +23,7 @@ import numpy as np
 import time
 
 
-class PulseBlasterUSB(PseudoclockDevice):
+class NarwhalDevicesPulseGenerator(PseudoclockDevice):
 
     pb_instructions = {'CONTINUE':   0,
                        'STOP':       1, 
@@ -37,7 +37,7 @@ class PulseBlasterUSB(PseudoclockDevice):
     wait_delay = 100e-9
     trigger_edge_type = 'falling'
 
-    description = 'SpinCore PulseBlasterUSB'        
+    description = 'SpinCore PulseBlasterUSB but using Labscript base calsses only. Not subclassing from other pulsbalaster types.'        
     clock_limit = 8.3e6 # can probably go faster
     clock_resolution = 20e-9
     n_flags = 24
@@ -47,56 +47,16 @@ class PulseBlasterUSB(PseudoclockDevice):
     allowed_children = [Pseudoclock]
     
     @set_passed_properties(
-        property_names = {"connection_table_properties": ["firmware",  "programming_scheme"],
-                          "device_properties": ["pulse_width", "max_instructions",
-                                                "time_based_stop_workaround",
-                                                "time_based_stop_workaround_extra_time"]}
+        property_names = {'connection_table_properties': ['serial_number'],
+                          'device_properties': ['pulse_width', 
+                                                'max_instructions']}
         )
-    def __init__(self, name, trigger_device=None, trigger_connection=None, board_number=0, firmware = '',
-                 programming_scheme='pb_start/BRANCH', pulse_width='symmetric', max_instructions=4000,
-                 time_based_stop_workaround=False, time_based_stop_workaround_extra_time=0.5, **kwargs):
+    def __init__(self, name, trigger_device=None, trigger_connection=None, serial_number=0, firmware = '',
+                 pulse_width='symmetric', max_instructions=4000, **kwargs):
         PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection, **kwargs)
-        self.BLACS_connection = board_number
-        # TODO: Implement capability checks based on firmware revision of PulseBlaster
+        self.BLACS_connection = serial_number
         self.firmware_version = firmware
         
-        # time_based_stop_workaround is for old pulseblaster models which do
-        # not respond correctly to status checks. These models provide no way
-        # to know when the shot has completed. So if
-        # time_based_stop_workaround=True, we fall back to simply waiting
-        # until stop_time (plus the timeout of all waits) and assuming in the
-        # BLACS worker that the end of the shot occurs at this time.
-        # time_based_stop_workaround_extra_time is a configurable duration for
-        # how much longer than stop_time we should wait, to allow for software
-        # timing variation. Note that since the maximum duration of all waits
-        # is included in the calculation of the time at which the experiemnt
-        # should be stopped, attention should be paid to the timeout argument
-        # of all waits, since if it is larger than necessary, this will
-        # increase the duration of your shots even if the waits are actually
-        # short in duration.
-        
-        
-        # If we are the master pseudoclock, there are two ways we can start and stop the PulseBlaster.
-        #
-        # 'pb_start/BRANCH':
-        # Call pb_start(), to start us in software time. At the end of the program BRANCH to
-        # a WAIT instruction at the beginning, ready to start again.
-        #
-        # 'pb_stop_programming/STOP'
-        # Defer calling pb_stop_programming() until everything is ready to start.
-        # Then, the next hardware trigger to the PulseBlaster will start it.
-        # It is important not to call pb_stop_programming() too soon, because if the PulseBlaster is receiving
-        # repeated triggers (such as from a 50/60-Hz line trigger), then we do not want it to start running
-        # before everything is ready. Not calling pb_stop_programming() until we are ready ensures triggers are
-        # ignored until then. In this case, we end with a STOP instruction, ensuring further triggers do not cause
-        # the PulseBlaster to run repeatedly until start_programming()/stop_programming() are called once more.
-        # The programming scheme is saved as a property in the connection table and read out by BLACS.
-        possible_programming_schemes = ['pb_start/BRANCH', 'pb_stop_programming/STOP']
-        if programming_scheme not in possible_programming_schemes:
-            raise LabscriptError('programming_scheme must be one of %s'%str(possible_programming_schemes))
-        if trigger_device is not None and programming_scheme != 'pb_start/BRANCH':
-            raise LabscriptError('only the master pseudoclock can use a programming scheme other than \'pb_start/BRANCH\'')
-        self.programming_scheme = programming_scheme
 
         # This is the minimum duration of a pulseblaster instruction. We save this now
         # because clock_limit will be modified to reflect child device limitations and
@@ -104,14 +64,7 @@ class PulseBlasterUSB(PseudoclockDevice):
         # that.
         self.min_delay = 0.5 / self.clock_limit
 
-        # For pulseblaster instructions lasting longer than the below duration, we will
-        # instead use some multiple of the below, and then a regular instruction for the
-        # remainder. The max instruction length of a pulseblaster is actually 2**32
-        # clock cycles, but we subtract the minimum delay so that if the remainder is
-        # less than the minimum instruction length, we can add self.long_delay to it (and
-        # reduce the number of repetitions of the long delay by one), to keep it above
-        # the minimum delay without exceeding the true maximum delay.
-        self.long_delay = 2**32 / (self.core_clock_freq * 1e6) - self.min_delay
+
 
         if pulse_width == 'minimum':
             pulse_width = 0.5/self.clock_limit # the shortest possible
@@ -144,7 +97,7 @@ class PulseBlasterUSB(PseudoclockDevice):
         self._direct_output_clock_line = ClockLine('%s_direct_output_clock_line'%name, self.pseudoclock, 'internal', ramping_allowed = False)
         # Create the internal intermediate device connected to the above clock line
         # This will have the direct DigitalOuts of DDSs of the PulseBlaster connected to it
-        self._direct_output_device = PulseBlasterDirectOutputs('%s_direct_output_device'%name, self._direct_output_clock_line)
+        self._direct_output_device = NarwhalDevicesPulseGeneratorDirectOutputs('%s_direct_output_device'%name, self._direct_output_clock_line)
     
     @property
     def pseudoclock(self):
@@ -209,17 +162,17 @@ class PulseBlasterUSB(PseudoclockDevice):
                 # get connection number and prefix
                 try:
                     prefix, connection = output.connection.split()
-                    assert prefix == 'flag' or prefix == 'dds'
+                    assert prefix == 'channel' or prefix == 'dds'
                     connection = int(connection)
                 except:
                     raise LabscriptError('%s %s has invalid connection string: \'%s\'. '%(output.description,output.name,str(output.connection)) + 
                                          'Format must be \'flag n\' with n an integer less than %d, or \'dds n\' with n less than 2.'%self.n_flags)
                 # run checks on the connection string to make sure it is valid
                 # TODO: Most of this should be done in add_device() No?
-                if prefix == 'flag' and not self.flag_valid(connection):
+                if prefix == 'channel' and not self.flag_valid(connection):
                     raise LabscriptError('%s is set as connected to flag %d of %s. '%(output.name, connection, self.name) +
                                          'Output flag number must be a integer from 0 to %d.'%(self.n_flags-1))
-                if prefix == 'flag' and self.flag_is_clock(connection): 
+                if prefix == 'channel' and self.flag_is_clock(connection): 
                     raise LabscriptError('%s is set as connected to flag %d of %s.'%(output.name, connection, self.name) +
                                          ' This flag is already in use as one of the PulseBlaster\'s clock flags.')                         
                 if prefix == 'dds' and not connection < 2:
@@ -404,11 +357,12 @@ class PulseBlasterUSB(PseudoclockDevice):
                 # case we are not honouring the requested symmetric or fixed pulse
                 # width. To do so would be possible, but would consume more pulseblaster
                 # instructions, so we err on the side of fewer instructions:
-                high_time = min(high_time, self.long_delay)
+                # high_time = min(high_time, self.long_delay)
 
                 # Low time is whatever is left:
                 low_time = instruction['step'] - high_time
 
+                self.long_delay = high_time
                 # Do we need to insert a LONG_DELAY instruction to create a delay this
                 # long?
                 n_long_delays, remaining_low_time =  divmod(low_time, self.long_delay)
@@ -472,27 +426,27 @@ class PulseBlasterUSB(PseudoclockDevice):
                 j += 2 if n_long_delays else 1
                 
 
-        if self.programming_scheme == 'pb_start/BRANCH':
-            # This is how we stop the pulse program. We branch from the last
-            # instruction to the zeroth, which BLACS has programmed in with
-            # the same values and a WAIT instruction. The PulseBlaster then
-            # waits on instuction zero, which is a state ready for either
-            # further static updates or buffered mode.
-            pb_inst.append({'freqs': freqregs, 'amps': ampregs, 'phases': phaseregs, 'enables':dds_enables, 'phase_resets':phase_resets,
-                            'flags': flagstring, 'instruction': 'BRANCH',
-                            'data': 0, 'delay': 10.0/self.clock_limit*1e9})
-        elif self.programming_scheme == 'pb_stop_programming/STOP':
-            # An ordinary stop instruction. This has the downside that the PulseBlaster might
-            # (on some models) reset its output to zero momentarily until BLACS calls program_manual, which
-            # it will for this programming scheme. However it is necessary when the PulseBlaster has
-            # repeated triggers coming to it, such as a 50Hz/60Hz line trigger. We can't have it sit
-            # on a WAIT instruction as above, or it will trigger and run repeatedly when that's not what
-            # we wanted.
-            pb_inst.append({'freqs': freqregs, 'amps': ampregs, 'phases': phaseregs, 'enables':dds_enables, 'phase_resets':phase_resets,
-                            'flags': flagstring, 'instruction': 'STOP',
-                            'data': 0, 'delay': 10.0/self.clock_limit*1e9})
-        else:
-            raise AssertionError('Invalid programming scheme %s'%str(self.programming_scheme))
+        # if self.programming_scheme == 'pb_start/BRANCH':
+        #     # This is how we stop the pulse program. We branch from the last
+        #     # instruction to the zeroth, which BLACS has programmed in with
+        #     # the same values and a WAIT instruction. The PulseBlaster then
+        #     # waits on instuction zero, which is a state ready for either
+        #     # further static updates or buffered mode.
+        #     pb_inst.append({'freqs': freqregs, 'amps': ampregs, 'phases': phaseregs, 'enables':dds_enables, 'phase_resets':phase_resets,
+        #                     'flags': flagstring, 'instruction': 'BRANCH',
+        #                     'data': 0, 'delay': 10.0/self.clock_limit*1e9})
+        # elif self.programming_scheme == 'pb_stop_programming/STOP':
+        #     # An ordinary stop instruction. This has the downside that the PulseBlaster might
+        #     # (on some models) reset its output to zero momentarily until BLACS calls program_manual, which
+        #     # it will for this programming scheme. However it is necessary when the PulseBlaster has
+        #     # repeated triggers coming to it, such as a 50Hz/60Hz line trigger. We can't have it sit
+        #     # on a WAIT instruction as above, or it will trigger and run repeatedly when that's not what
+        #     # we wanted.
+        #     pb_inst.append({'freqs': freqregs, 'amps': ampregs, 'phases': phaseregs, 'enables':dds_enables, 'phase_resets':phase_resets,
+        #                     'flags': flagstring, 'instruction': 'STOP',
+        #                     'data': 0, 'delay': 10.0/self.clock_limit*1e9})
+        # else:
+        #     raise AssertionError('Invalid programming scheme %s'%str(self.programming_scheme))
             
         if len(pb_inst) > self.max_instructions:
             raise LabscriptError("The Pulseblaster memory cannot store more than {:d} instuctions, but the PulseProgram contains {:d} instructions.".format(self.max_instructions, len(pb_inst))) 
@@ -540,9 +494,9 @@ class PulseBlasterUSB(PseudoclockDevice):
         self._check_wait_monitor_ok()
         self.write_pb_inst_to_h5(pb_inst, hdf5_file) 
 
-class PulseBlasterDirectOutputs(IntermediateDevice):
+class NarwhalDevicesPulseGeneratorDirectOutputs(IntermediateDevice):
     allowed_children = [DigitalOut]
-    clock_limit = PulseBlasterUSB.clock_limit
+    clock_limit = NarwhalDevicesPulseGenerator.clock_limit
     description = 'PB-DDSII-300 Direct Outputs'
   
     def add_device(self, device):

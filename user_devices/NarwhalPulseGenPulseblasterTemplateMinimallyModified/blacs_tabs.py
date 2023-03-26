@@ -6,8 +6,6 @@ from .blacs_workers import PulseblasterUSBWorker
 import os
 
 from blacs.device_base_class import DeviceTab, define_state, MODE_BUFFERED
-
-# from blacs.tab_base_classes import Worker, define_state
 from blacs.tab_base_classes import MODE_MANUAL, MODE_TRANSITION_TO_BUFFERED, MODE_TRANSITION_TO_MANUAL, MODE_BUFFERED  
 
 

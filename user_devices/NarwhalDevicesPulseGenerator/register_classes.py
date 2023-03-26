@@ -1,8 +1,8 @@
 import labscript_devices
 
-labscript_device_name = 'PulseBlasterUSB'
-blacs_tab = 'user_devices.NarwhalPulseGenPulseblasterTemplate.blacs_tabs.PulseblasterUSBTab'
-parser = 'user_devices.NarwhalPulseGenPulseblasterTemplate.runviewer_parsers.PulseBlasterUSBParser'
+labscript_device_name = 'NarwhalDevicesPulseGenerator'
+blacs_tab = 'user_devices.NarwhalDevicesPulseGenerator.blacs_tabs.NarwhalDevicesPulseGeneratorTab'
+parser = 'user_devices.NarwhalDevicesPulseGenerator.runviewer_parsers.NarwhalDevicesPulseGeneratorParser'
 # Important! If changing from user_devices to labscript_devices, you must also change this in blacs_tabs.py -> NarwhalPulseGenTab -> initialise_workers
 
 labscript_devices.register_classes(

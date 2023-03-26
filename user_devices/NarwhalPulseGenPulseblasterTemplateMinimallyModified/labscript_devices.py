@@ -23,7 +23,7 @@ import numpy as np
 import time
 
 
-class PulseBlasterUSB(PseudoclockDevice):
+class PulseBlasterUSBLabscriptBaseClassesOnly(PseudoclockDevice):
 
     pb_instructions = {'CONTINUE':   0,
                        'STOP':       1, 
@@ -37,7 +37,7 @@ class PulseBlasterUSB(PseudoclockDevice):
     wait_delay = 100e-9
     trigger_edge_type = 'falling'
 
-    description = 'SpinCore PulseBlasterUSB'        
+    description = 'SpinCore PulseBlasterUSB but using Labscript base calsses only. Not subclassing from other pulsbalaster types.'        
     clock_limit = 8.3e6 # can probably go faster
     clock_resolution = 20e-9
     n_flags = 24
@@ -542,7 +542,7 @@ class PulseBlasterUSB(PseudoclockDevice):
 
 class PulseBlasterDirectOutputs(IntermediateDevice):
     allowed_children = [DigitalOut]
-    clock_limit = PulseBlasterUSB.clock_limit
+    clock_limit = PulseBlasterUSBLabscriptBaseClassesOnly.clock_limit
     description = 'PB-DDSII-300 Direct Outputs'
   
     def add_device(self, device):

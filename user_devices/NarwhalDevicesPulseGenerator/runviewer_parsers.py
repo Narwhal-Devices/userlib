@@ -42,7 +42,7 @@ def stop_profile(name):
 
 
 
-class PulseBlasterUSBParser(object):
+class NarwhalDevicesPulseGeneratorParser(object):
     num_dds = 0
     num_flags = 24
     
