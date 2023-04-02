@@ -33,14 +33,14 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                        'LONG_DELAY': 7,
                        'WAIT':       8}
                        
-    trigger_delay = 250e-9 
-    wait_delay = 100e-9
-    trigger_edge_type = 'falling'
+    trigger_delay = 30e-9 
+    wait_delay = 30e-9 # Don't know what this is
+    trigger_edge_type = 'rising'
 
-    description = 'SpinCore PulseBlasterUSB but using Labscript base calsses only. Not subclassing from other pulsbalaster types.'        
-    clock_limit = 8.3e6 # can probably go faster
-    clock_resolution = 20e-9
-    n_flags = 24
+    description = 'Narwhal Devices Pulse Generator, using a PulsebalsterUSB template but using Labscript base calsses only. Not subclassing from other pulsbalaster types.'        
+    clock_limit = 50e6 # Not fully sure what this is. I think it might be the maximum OUTPUT clock, which consists of TWO instructions (high, low)
+    clock_resolution = 10e-9
+    n_channels = 24
     core_clock_freq = 100.0
     
     # This device can only have Pseudoclock children (digital outs and DDS outputs should be connected to a child device)
@@ -58,7 +58,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         self.firmware_version = firmware
         
 
-        # This is the minimum duration of a pulseblaster instruction. We save this now
+        # This is the minimum duration of a NDPG instruction. We save this now
         # because clock_limit will be modified to reflect child device limitations and
         # other things, but this remains the minimum instruction delay regardless of all
         # that.
@@ -107,36 +107,50 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
     def direct_outputs(self):
         return self._direct_output_device
     
+    # def add_device(self, device):
+    #     if not self.child_devices and isinstance(device, Pseudoclock):
+    #         PseudoclockDevice.add_device(self, device)
+            
+    #     elif isinstance(device, Pseudoclock):
+    #         raise LabscriptError('The %s %s automatically creates a Pseudoclock because it only supports one. '%(self.description, self.name) +
+    #                              'Instead of instantiating your own Pseudoclock object, please use the internal' +
+    #                              ' one stored in %s.pseudoclock'%self.name)
+    #     # elif isinstance(device, DDS) or isinstance(device, PulseBlasterDDS) or isinstance(device, DigitalOut):
+    #     #     #TODO: Defensive programming: device.name may not exist!
+    #     elif isinstance(device, DigitalOut):
+    #         #TODO: Defensive programming: device.name may not exist!
+    #         raise LabscriptError('You have connected %s directly to %s, which is not allowed. You should instead specify the parent_device of %s as %s.direct_outputs'%(device.name, self.name, device.name, self.name))
+    #     else:
+    #         raise LabscriptError('You have connected %s (class %s) to %s, but %s does not support children with that class.'%(device.name, device.__class__, self.name, self.name))
     def add_device(self, device):
         if not self.child_devices and isinstance(device, Pseudoclock):
             PseudoclockDevice.add_device(self, device)
-            
         elif isinstance(device, Pseudoclock):
-            raise LabscriptError('The %s %s automatically creates a Pseudoclock because it only supports one. '%(self.description, self.name) +
-                                 'Instead of instantiating your own Pseudoclock object, please use the internal' +
-                                 ' one stored in %s.pseudoclock'%self.name)
-        # elif isinstance(device, DDS) or isinstance(device, PulseBlasterDDS) or isinstance(device, DigitalOut):
-        #     #TODO: Defensive programming: device.name may not exist!
+            raise LabscriptError(f'The {self.name} PseudoclockDevice only supports a single Pseudoclock, so it automatically creates one.' +
+                                 f'Instead of instantiating your own Pseudoclock object, please use the internal one stored in {self.name}.pseudoclock')
         elif isinstance(device, DigitalOut):
-            #TODO: Defensive programming: device.name may not exist!
-            raise LabscriptError('You have connected %s directly to %s, which is not allowed. You should instead specify the parent_device of %s as %s.direct_outputs'%(device.name, self.name, device.name, self.name))
+            raise LabscriptError(f'You have connected {device.name} directly to {self.name}, which is not allowed. You should instead specify ' + 
+                                 f'the parent_device of {device.name} as {self.name}.direct_outputs')
+        elif isinstance(device, ClockLine):
+            raise LabscriptError(f'You have connected {device.name} directly to {self.name}, which is not allowed. You should instead specify ' + 
+                                 f'the parent_device of {device.name} as {self.name}.pseudoclock')
         else:
-            raise LabscriptError('You have connected %s (class %s) to %s, but %s does not support children with that class.'%(device.name, device.__class__, self.name, self.name))
-                
-    def flag_valid(self, flag):
-        if -1 < flag < self.n_flags:
+            raise LabscriptError(f'You have connected {device.name} (class {device.__class__}) to {self.name}, but {self.name} does not support children with that class.')
+                        
+    def channel_valid(self, channel):
+        if -1 < channel < self.n_channels:
             return True
         return False     
         
-    def flag_is_clock(self, flag):
+    def channel_is_clock(self, channel):
         for clock_line in self.pseudoclock.child_devices:
             if clock_line.connection == 'internal': #ignore internal clockline
                 continue
-            if flag == self.get_flag_number(clock_line.connection):
+            if channel == self.get_channel_number(clock_line.connection):
                 return True
         return False
             
-    def get_flag_number(self, connection):
+    def get_channel_number(self, connection):
         # TODO: Error checking
         prefix, connection = connection.split()
         return int(connection)
@@ -144,7 +158,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
     def get_direct_outputs(self):
         """Finds out which outputs are directly attached to the PulseBlaster"""
         dig_outputs = []
-        dds_outputs = []
+        # dds_outputs = []
         for output in self.direct_outputs.get_all_outputs():
             # # If we are a child of a DDS
             # if isinstance(output.parent_device, DDS) or isinstance(output.parent_device, PulseBlasterDDS):
@@ -162,25 +176,22 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                 # get connection number and prefix
                 try:
                     prefix, connection = output.connection.split()
-                    assert prefix == 'channel' or prefix == 'dds'
+                    assert prefix == 'channel'# or prefix == 'dds'
                     connection = int(connection)
                 except:
                     raise LabscriptError('%s %s has invalid connection string: \'%s\'. '%(output.description,output.name,str(output.connection)) + 
-                                         'Format must be \'flag n\' with n an integer less than %d, or \'dds n\' with n less than 2.'%self.n_flags)
+                                         'Format must be \'channel n\' with n an integer less than %d.'%self.n_channels)
                 # run checks on the connection string to make sure it is valid
                 # TODO: Most of this should be done in add_device() No?
-                if prefix == 'channel' and not self.flag_valid(connection):
+                if prefix == 'channel' and not self.channel_valid(connection):
                     raise LabscriptError('%s is set as connected to flag %d of %s. '%(output.name, connection, self.name) +
-                                         'Output flag number must be a integer from 0 to %d.'%(self.n_flags-1))
-                if prefix == 'channel' and self.flag_is_clock(connection): 
-                    raise LabscriptError('%s is set as connected to flag %d of %s.'%(output.name, connection, self.name) +
-                                         ' This flag is already in use as one of the PulseBlaster\'s clock flags.')                         
-                if prefix == 'dds' and not connection < 2:
-                    raise LabscriptError('%s is set as connected to output connection %d of %s. '%(output.name, connection, self.name) +
-                                         'DDS output connection number must be a integer less than 2.')
+                                         'Output flag number must be a integer from 0 to %d.'%(self.n_channels-1))
+                if prefix == 'channel' and self.channel_is_clock(connection): 
+                    raise LabscriptError('%s is set as connected to channel %d of %s.'%(output.name, connection, self.name) +
+                                         ' This channel is already in use as one of the Pulse Generator\'s clock channels.')                         
                 
                 # Check that the connection string doesn't conflict with another output
-                for other_output in dig_outputs + dds_outputs:
+                for other_output in dig_outputs:# + dds_outputs:
                     if output.connection == other_output.connection:
                         raise LabscriptError('%s and %s are both set as connected to %s of %s.'%(output.name, other_output.name, output.connection, self.name))
                 
@@ -190,76 +201,76 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                 # elif isinstance(output, DDS) or isinstance(output, PulseBlasterDDS):
                 #     dds_outputs.append(output) 
                 
-        return dig_outputs, dds_outputs
+        return dig_outputs
 
-    def generate_registers(self, hdf5_file, dds_outputs):
-        ampdicts = {}
-        phasedicts = {}
-        freqdicts = {}
-        group = hdf5_file['/devices/'+self.name]
-        dds_dict = {}
-        for output in dds_outputs:
-            num = int(output.connection.split()[1])
-            dds_dict[num] = output
-        for num in [0,1]:
+    # def generate_registers(self, hdf5_file, dds_outputs):
+    #     ampdicts = {}
+    #     phasedicts = {}
+    #     freqdicts = {}
+    #     group = hdf5_file['/devices/'+self.name]
+    #     dds_dict = {}
+    #     for output in dds_outputs:
+    #         num = int(output.connection.split()[1])
+    #         dds_dict[num] = output
+    #     for num in [0,1]:
             
-            if num in dds_dict:
-                output = dds_dict[num]
+    #         if num in dds_dict:
+    #             output = dds_dict[num]
             
-                # Ensure that amplitudes are within bounds:
-                if any(output.amplitude.raw_output > 1)  or any(output.amplitude.raw_output < 0):
-                    raise LabscriptError('%s %s '%(output.amplitude.description, output.amplitude.name) +
-                                      'can only have values between 0 and 1, ' + 
-                                      'the limit imposed by %s.'%output.name)
+    #             # Ensure that amplitudes are within bounds:
+    #             if any(output.amplitude.raw_output > 1)  or any(output.amplitude.raw_output < 0):
+    #                 raise LabscriptError('%s %s '%(output.amplitude.description, output.amplitude.name) +
+    #                                   'can only have values between 0 and 1, ' + 
+    #                                   'the limit imposed by %s.'%output.name)
                                       
-                # Ensure that frequencies are within bounds:
-                if any(output.frequency.raw_output > 150e6 )  or any(output.frequency.raw_output < 0):
-                    raise LabscriptError('%s %s '%(output.frequency.description, output.frequency.name) +
-                                      'can only have values between 0Hz and and 150MHz, ' + 
-                                      'the limit imposed by %s.'%output.name)
+    #             # Ensure that frequencies are within bounds:
+    #             if any(output.frequency.raw_output > 150e6 )  or any(output.frequency.raw_output < 0):
+    #                 raise LabscriptError('%s %s '%(output.frequency.description, output.frequency.name) +
+    #                                   'can only have values between 0Hz and and 150MHz, ' + 
+    #                                   'the limit imposed by %s.'%output.name)
                                       
-                # Ensure that phase wraps around:
-                output.phase.raw_output %= 360
+    #             # Ensure that phase wraps around:
+    #             output.phase.raw_output %= 360
                 
-                amps = set(output.amplitude.raw_output)
-                phases = set(output.phase.raw_output)
-                freqs = set(output.frequency.raw_output)
-            else:
-                # If the DDS is unused, it will use the following values
-                # for the whole experimental run:
-                amps = set([0])
-                phases = set([0])
-                freqs = set([0])
+    #             amps = set(output.amplitude.raw_output)
+    #             phases = set(output.phase.raw_output)
+    #             freqs = set(output.frequency.raw_output)
+    #         else:
+    #             # If the DDS is unused, it will use the following values
+    #             # for the whole experimental run:
+    #             amps = set([0])
+    #             phases = set([0])
+    #             freqs = set([0])
                                   
-            if len(amps) > 1024:
-                raise LabscriptError('%s dds%d can only support 1024 amplitude registers, and %s have been requested.'%(self.name, num, str(len(amps))))
-            if len(phases) > 128:
-                raise LabscriptError('%s dds%d can only support 128 phase registers, and %s have been requested.'%(self.name, num, str(len(phases))))
-            if len(freqs) > 1024:
-                raise LabscriptError('%s dds%d can only support 1024 frequency registers, and %s have been requested.'%(self.name, num, str(len(freqs))))
+    #         if len(amps) > 1024:
+    #             raise LabscriptError('%s dds%d can only support 1024 amplitude registers, and %s have been requested.'%(self.name, num, str(len(amps))))
+    #         if len(phases) > 128:
+    #             raise LabscriptError('%s dds%d can only support 128 phase registers, and %s have been requested.'%(self.name, num, str(len(phases))))
+    #         if len(freqs) > 1024:
+    #             raise LabscriptError('%s dds%d can only support 1024 frequency registers, and %s have been requested.'%(self.name, num, str(len(freqs))))
                                 
-            # start counting at 1 to leave room for the dummy instruction,
-            # which BLACS will fill in with the state of the front
-            # panel:
-            ampregs = range(1,len(amps)+1)
-            freqregs = range(1,len(freqs)+1)
-            phaseregs = range(1,len(phases)+1)
+    #         # start counting at 1 to leave room for the dummy instruction,
+    #         # which BLACS will fill in with the state of the front
+    #         # panel:
+    #         ampregs = range(1,len(amps)+1)
+    #         freqregs = range(1,len(freqs)+1)
+    #         phaseregs = range(1,len(phases)+1)
             
-            ampdicts[num] = dict(zip(amps,ampregs))
-            freqdicts[num] = dict(zip(freqs,freqregs))
-            phasedicts[num] = dict(zip(phases,phaseregs))
+    #         ampdicts[num] = dict(zip(amps,ampregs))
+    #         freqdicts[num] = dict(zip(freqs,freqregs))
+    #         phasedicts[num] = dict(zip(phases,phaseregs))
             
-            # The zeros are the dummy instructions:
-            freq_table = np.array([0] + list(freqs), dtype = np.float64) / 1e6 # convert to MHz
-            amp_table = np.array([0] + list(amps), dtype = np.float32)
-            phase_table = np.array([0] + list(phases), dtype = np.float64)
+    #         # The zeros are the dummy instructions:
+    #         freq_table = np.array([0] + list(freqs), dtype = np.float64) / 1e6 # convert to MHz
+    #         amp_table = np.array([0] + list(amps), dtype = np.float32)
+    #         phase_table = np.array([0] + list(phases), dtype = np.float64)
             
-            subgroup = group.create_group('DDS%d'%num)
-            subgroup.create_dataset('FREQ_REGS', compression=config.compression, data = freq_table)
-            subgroup.create_dataset('AMP_REGS', compression=config.compression, data = amp_table)
-            subgroup.create_dataset('PHASE_REGS', compression=config.compression, data = phase_table)
+    #         subgroup = group.create_group('DDS%d'%num)
+    #         subgroup.create_dataset('FREQ_REGS', compression=config.compression, data = freq_table)
+    #         subgroup.create_dataset('AMP_REGS', compression=config.compression, data = amp_table)
+    #         subgroup.create_dataset('PHASE_REGS', compression=config.compression, data = phase_table)
             
-        return freqdicts, ampdicts, phasedicts
+    #     return freqdicts, ampdicts, phasedicts
         
     def convert_to_pb_inst(self, dig_outputs, dds_outputs, freqs, amps, phases):
         pb_inst = []
@@ -275,7 +286,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         # We've delegated the initial two instructions off to BLACS, which
         # can ensure continuity with the state of the front panel. Thus
         # these two instructions don't actually do anything:
-        flags = [0]*self.n_flags
+        flags = [0]*self.n_channels
         freqregs = [0]*2
         ampregs = [0]*2
         phaseregs = [0]*2
@@ -290,7 +301,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                         'data': 0, 'delay': 10.0/self.clock_limit*1e9})    
         j += 2
         
-        flagstring = '0'*self.n_flags # So that this variable is still defined if the for loop has no iterations
+        flagstring = '0'*self.n_channels # So that this variable is still defined if the for loop has no iterations
         for k, instruction in enumerate(self.pseudoclock.clock):
             if instruction == 'WAIT':
                 # This is a wait instruction. Repeat the last instruction but with a 100ns delay and a WAIT op code:
@@ -302,7 +313,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                 j += 1
                 continue
                 
-            flags = [0]*self.n_flags
+            flags = [0]*self.n_channels
             # The registers below are ones, not zeros, so that we don't
             # use the BLACS-inserted initial instructions. Instead
             # unused DDSs have a 'zero' in register one for freq, amp
@@ -489,7 +500,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         # Generate the hardware instructions
         self.init_device_group(hdf5_file)
         PseudoclockDevice.generate_code(self, hdf5_file)
-        dig_outputs, ignore = self.get_direct_outputs()
+        dig_outputs = self.get_direct_outputs()
         pb_inst = self.convert_to_pb_inst(dig_outputs, [], {}, {}, {})
         self._check_wait_monitor_ok()
         self.write_pb_inst_to_h5(pb_inst, hdf5_file) 
@@ -497,19 +508,19 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
 class NarwhalDevicesPulseGeneratorDirectOutputs(IntermediateDevice):
     allowed_children = [DigitalOut]
     clock_limit = NarwhalDevicesPulseGenerator.clock_limit
-    description = 'PB-DDSII-300 Direct Outputs'
+    description = 'Narwhal Devices Pulse Generator Direct Outputs'
   
     def add_device(self, device):
         IntermediateDevice.add_device(self, device)
-        if isinstance(device, DDS):
-            # Check that the user has not specified another digital line as the gate for this DDS, that doesn't make sense.
-            # Then instantiate a DigitalQuantity to keep track of gating.
-            if device.gate is None:
-                device.gate = DigitalQuantity(device.name + '_gate', device, 'gate')
-            else:
-                raise LabscriptError('You cannot specify a digital gate ' +
-                                     'for a DDS connected to %s. '% (self.name) + 
-                                     'The digital gate is always internal to the Pulseblaster.')
+        # if isinstance(device, DDS):
+        #     # Check that the user has not specified another digital line as the gate for this DDS, that doesn't make sense.
+        #     # Then instantiate a DigitalQuantity to keep track of gating.
+        #     if device.gate is None:
+        #         device.gate = DigitalQuantity(device.name + '_gate', device, 'gate')
+        #     else:
+        #         raise LabscriptError('You cannot specify a digital gate ' +
+        #                              'for a DDS connected to %s. '% (self.name) + 
+        #                              'The digital gate is always internal to the Pulseblaster.')
 
 
 

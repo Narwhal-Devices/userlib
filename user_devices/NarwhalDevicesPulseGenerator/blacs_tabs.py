@@ -70,7 +70,9 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # Look into this after I have made it work in a more basic fashon. Also, it if fast to load instructions, so I'm not sure if this is necessary.
         # self.supports_smart_programming(True) 
         
-        #Checks state on startup 
+        #Checks state on startup
+        '''This is sort of causing some issues. This works as it should, but BLACS somehow remembers the state the NDPG was in when blacs last closed, and then there is a conflict and I have to choose which is correct.
+        Not sure how to fix that. Maybe it doesn't need fixing, and it just means I havent finished programming the transition from buffered. OR transition_to_manual'''
         self.supports_remote_value_check(True)
         
         # Load status monitor (and start/stop/reset buttons) UI
@@ -96,9 +98,8 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
             self.status[state] = False
             self.status_widgets[state] = getattr(ui,'%s_label'%state) 
         
-        # Not sure what this does.
         # Status monitor timout
-        # self.statemachine_timeout_add(2000, self.status_monitor)
+        self.statemachine_timeout_add(2000, self.status_monitor)
         
     def get_child_from_connection_table(self, parent_device_name, port):
         # Don't know what this does, but I think it is ok to leave it.
@@ -137,9 +138,20 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # When called with a queue, this function writes to the queue
         # when the pulseblaster is waiting. This indicates the end of
         # an experimental run.
-        pass
+        
         # self.status, waits_pending, time_based_shot_over = yield(self.queue_work(self._primary_worker,'check_status'))
         
+        notifications, state, powerline_state = yield(self.queue_work(self._primary_worker,'check_status'))
+
+        #Do some other shit too. such as:
+        if notify_queue:
+            for notification in notifications:
+                if notification['finished_notify']:
+                    notify_queue.put('done')            
+                    self.statemachine_timeout_remove(self.status_monitor)
+                    self.statemachine_timeout_add(2000,self.status_monitor)
+                    break
+
         # if self.programming_scheme == 'pb_start/BRANCH':
         #     done_condition = self.status['waiting']
         # elif self.programming_scheme == 'pb_stop_programming/STOP':
@@ -192,3 +204,11 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.statemachine_timeout_remove(self.status_monitor)
         self.start()
         self.statemachine_timeout_add(100,self.status_monitor,notify_queue)
+
+
+'''So I should just make whatever buttons make sence for the NDPG. I don't need to follow
+the pulseblaster layout.
+
+
+
+'''
