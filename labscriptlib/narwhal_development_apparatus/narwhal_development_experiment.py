@@ -3,18 +3,18 @@ from user_devices.NarwhalDevicesPulseGenerator.labscript_devices import NarwhalD
 
 NarwhalDevicesPulseGenerator(name='Narwhal_Devices_Pulse_Generator', serial_number='12582914')
 
-#Connect ClockLines to things like NI cards, where each rising (or falling) edge makes the NI card output its next value
-ClockLine(name='narwhalpulsegen_clock1', pseudoclock=Narwhal_Devices_Pulse_Generator.pseudoclock, connection='channel 0')
-ClockLine(name='narwhalpulsegen_clock2', pseudoclock=Narwhal_Devices_Pulse_Generator.pseudoclock, connection='channel 4')
-
 #Connect DigitalOut to things like RF switches powering AOMs. This allows you to turn the AOM on or OFF at given times
-DigitalOut(name='digital_out1', parent_device=Narwhal_Devices_Pulse_Generator.direct_outputs, connection='channel 1')
-DigitalOut(name='digital_out2', parent_device=Narwhal_Devices_Pulse_Generator.direct_outputs, connection='channel 2')
+DigitalOut(name='digital_out1', parent_device=Narwhal_Devices_Pulse_Generator.direct_outputs, connection='channel 0')
+DigitalOut(name='digital_out2', parent_device=Narwhal_Devices_Pulse_Generator.direct_outputs, connection='channel 1')
 
 #Connect Triggers to things like camera shutters, or other Pulse Generators (or pseudoclocks). Triggers are the same 
 # as DigitalOut, except there are a couple of convenience features. eg. You just specitfy an output time, and duration. 
 # You donh have to explicitly call it to go high at one time, and low at another.
-Trigger(name='camera_trigger', parent_device=Narwhal_Devices_Pulse_Generator.direct_outputs, connection='channel 3')
+Trigger(name='camera_trigger', parent_device=Narwhal_Devices_Pulse_Generator.direct_outputs, connection='channel 2')
+
+#Connect ClockLines to things like NI cards, where each rising (or falling) edge makes the NI card output its next value
+ClockLine(name='narwhalpulsegen_clock1', pseudoclock=Narwhal_Devices_Pulse_Generator.pseudoclock, connection='channel 3')
+ClockLine(name='narwhalpulsegen_clock2', pseudoclock=Narwhal_Devices_Pulse_Generator.pseudoclock, connection='channel 4')
 
 
 if __name__ == '__main__':
@@ -43,7 +43,7 @@ if __name__ == '__main__':
     digital_out1.go_low(t)
 
     # Wait for 2 seconds
-    t += 2.0
+    t += 50E-9
 
     # Stop the experiment shot with stop()
     stop(t)

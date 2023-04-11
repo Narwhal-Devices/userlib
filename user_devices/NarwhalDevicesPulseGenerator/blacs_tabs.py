@@ -56,7 +56,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # Create the output objects         
         self.create_digital_outputs(do_prop)        
         # Create widgets for output objects
-        dds_widgets,ao_widgets,do_widgets = self.auto_create_widgets()
+        _, _, do_widgets = self.auto_create_widgets()
         
         # Define the sort function for the digital outputs
         def sort(channel):
@@ -76,31 +76,38 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.supports_remote_value_check(True)
         
         # Load status monitor (and start/stop/reset buttons) UI
-        ui = UiLoader().load(os.path.join(os.path.dirname(os.path.realpath(__file__)),'narwhaldevicespulsegenerator.ui'))        
-        self.get_tab_layout().addWidget(ui)
+        self.ui = UiLoader().load(os.path.join(os.path.dirname(os.path.realpath(__file__)),'narwhaldevicespulsegenerator.ui'))        
+        self.get_tab_layout().addWidget(self.ui)
         # Connect signals for buttons
-        ui.start_button.clicked.connect(self.start)
-        ui.stop_button.clicked.connect(self.stop)
-        ui.reset_button.clicked.connect(self.reset)
+        self.ui.button_start.clicked.connect(self.start)
+        self.ui.button_pause.toggled.connect(self.pause)
+        self.ui.button_stop.clicked.connect(self.stop)
+        self.ui.button_reset.clicked.connect(self.reset)
+
+        # Connect the combo boxes
+        self.ui.combo_runmode.currentTextChanged.connect(self.runmode_textchanged)
+        self.ui.combo_triggersource.currentTextChanged.connect(self.triggersource_textchanged)
+
+        # connect the check boxes
+        self.ui.check_waitforpowerline.toggled.connect(self.waitforpowerline_toggled)
+
         # Add icons
-        ui.start_button.setIcon(QtGui.QIcon(':/qtutils/fugue/control'))
-        ui.start_button.setToolTip('Start')
-        ui.stop_button.setIcon(QtGui.QIcon(':/qtutils/fugue/control-stop-square'))
-        ui.stop_button.setToolTip('Stop')
-        ui.reset_button.setIcon(QtGui.QIcon(':/qtutils/fugue/arrow-circle'))
-        ui.reset_button.setToolTip('Reset')
+        self.ui.button_start.setIcon(QtGui.QIcon(':/qtutils/fugue/control'))
+        self.ui.button_start.setToolTip('Start')
+        self.ui.button_pause.setIcon(QtGui.QIcon(':/qtutils/fugue/control-pause'))
+        self.ui.button_pause.setToolTip('Software enable/disable')
+        self.ui.button_stop.setIcon(QtGui.QIcon(':/qtutils/fugue/control-stop-square'))
+        self.ui.button_stop.setToolTip('Stop after current run')
+        self.ui.button_reset.setIcon(QtGui.QIcon(':/qtutils/fugue/arrow-circle'))
+        self.ui.button_reset.setToolTip('Reset')
         
-        # initialise dictionaries of data to display and get references to the QLabels
-        self.status_states = ['stopped', 'reset', 'running', 'waiting']
-        self.status = {}
-        self.status_widgets = {}
-        for state in self.status_states:
-            self.status[state] = False
-            self.status_widgets[state] = getattr(ui,'%s_label'%state) 
+
         
         # Status monitor timout
         self.statemachine_timeout_add(2000, self.status_monitor)
-        
+    
+
+
     def get_child_from_connection_table(self, parent_device_name, port):
         # Don't know what this does, but I think it is ok to leave it.
         # This is a direct output, let's search for it on the internal intermediate device called NarwhalDevicesPulseGeneratorDirectOutputs
@@ -142,6 +149,48 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # self.status, waits_pending, time_based_shot_over = yield(self.queue_work(self._primary_worker,'check_status'))
         
         notifications, state, powerline_state = yield(self.queue_work(self._primary_worker,'check_status'))
+
+        # Synchronisation
+        powerline_freq = 1/(powerline_state['powerline_period']*10E-9)*powerline_state['powerline_locked']
+        self.ui.label_powerlinefrequency.setText(f'{powerline_freq:.3f} Hz')
+        self.ui.label_referenceclock.setText(f"{state['clock_source']}")
+
+        # Status
+        self.ui.label_currentaddress.setText(f"{state['current_address_approx']}")
+        self.ui.label_finaladdress.setText(f"{state['final_ram_address']}")
+        tick_pixmap = QtGui.QIcon(':/qtutils/fugue/tick').pixmap(QtCore.QSize(16, 16))
+        cross_pixmap = QtGui.QIcon(':/qtutils/fugue/cross').pixmap(QtCore.QSize(16, 16))
+        if state['running']:
+            self.ui.label_running.setPixmap(tick_pixmap)
+        else:
+            self.ui.label_running.setPixmap(cross_pixmap)
+        if state['software_run_enable']:
+            self.ui.label_enablesoftware.setPixmap(tick_pixmap)
+        else:
+            self.ui.label_enablesoftware.setPixmap(cross_pixmap)
+        if state['hardware_run_enable']:
+            self.ui.label_enablehardware.setPixmap(tick_pixmap)
+        else:
+            self.ui.label_enablehardware.setPixmap(cross_pixmap)
+
+        self.ui.button_pause.blockSignals(True)
+        self.ui.button_pause.setChecked(not state['software_run_enable'])
+        self.ui.button_pause.blockSignals(False)
+
+        # Run mode
+        #Why block signals? Because other parts of labscript can update the runmode, the runmode can change without me clicking the box. We don't want/need to send this signal again if another part of the program has already changed it.
+        self.ui.combo_runmode.blockSignals(True)  
+        self.ui.combo_runmode.setCurrentText(state['run_mode'])
+        self.ui.combo_runmode.blockSignals(False)
+
+        # Trigger in
+        self.ui.combo_triggersource.blockSignals(True)  
+        self.ui.combo_triggersource.setCurrentText(state['trigger_source'])
+        self.ui.combo_triggersource.blockSignals(False)
+        self.ui.check_waitforpowerline.blockSignals(True)
+        self.ui.check_waitforpowerline.setChecked(powerline_state['trig_on_powerline'])
+        self.ui.check_waitforpowerline.blockSignals(False)
+        self.ui.lineedit_powerlinedelay.setEnabled(powerline_state['trig_on_powerline'])
 
         #Do some other shit too. such as:
         if notify_queue:
@@ -186,15 +235,25 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
     def start(self,widget=None):
         yield(self.queue_work(self._primary_worker,'start_run'))
         self.status_monitor()
+
+    '''The decorator says what state the outer state machine can be in to allow calls to this method. 
+    The True, means only run the most recent entry for a method is run if duplicate entries for the GUI method
+    exist in the queue (albeit with different arguments)'''
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def pause(self, checked, widget=None):
+        enabled = not checked
+        yield(self.queue_work(self._primary_worker,'run_enable_software', enabled))
+        self.status_monitor()
         
     @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
     def stop(self,widget=None):
-        yield(self.queue_work(self._primary_worker,'pb_stop'))
+        yield(self.queue_work(self._primary_worker,'disable_after_current_run'))
         self.status_monitor()
         
     @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
     def reset(self,widget=None):
-        yield(self.queue_work(self._primary_worker,'pb_reset'))
+        yield(self.queue_work(self._primary_worker,'abort_buffered'))
+        # At the moment, abort_buffered jsut sends a reset run anyway, but if I cange it in the future, I might have to make a separate function.
         self.status_monitor()
     
     @define_state(MODE_BUFFERED,True)  
@@ -204,6 +263,22 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.statemachine_timeout_remove(self.status_monitor)
         self.start()
         self.statemachine_timeout_add(100,self.status_monitor,notify_queue)
+
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def runmode_textchanged(self, runmode, widget=None):
+        yield(self.queue_work(self._primary_worker,'set_runmode', runmode))
+        self.status_monitor()
+
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def triggersource_textchanged(self, triggersource, widget=None):
+        yield(self.queue_work(self._primary_worker,'set_triggersource', triggersource))
+        self.status_monitor()
+
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def waitforpowerline_toggled(self, checked, widget=None):
+        self.ui.lineedit_powerlinedelay.setEnabled(checked)
+        yield(self.queue_work(self._primary_worker,'set_waitforpowerline', checked))
+        self.status_monitor()
 
 
 '''So I should just make whatever buttons make sence for the NDPG. I don't need to follow

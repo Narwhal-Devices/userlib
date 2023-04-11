@@ -1,4 +1,8 @@
 from blacs.tab_base_classes import Worker
+import labscript_utils.h5_lock
+import h5py
+import numpy as np
+import labscript_utils.properties
 import ndpulsegen
 import queue
 
@@ -48,8 +52,10 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         #request the state
         self.pg.write_action(request_state=True, request_powerline_state=True)
         # wait for the state to be sent
-        state = state_queue.get(timeout=0.1)
-        powerline_state = powerline_state_queue.get(timeout=0.1)
+        # state = state_queue.get(timeout=0.1)
+        # powerline_state = powerline_state_queue.get(timeout=0.1)
+        state = state_queue.get()
+        powerline_state = powerline_state_queue.get()
         # Check for a notification. We mainly want to know if finished=True
         # Lots of notifications might possibly be sent, and any of them may contain a Finished=True. For now, just send them all.
         notifications = [] 
@@ -98,22 +104,30 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # after the shot completes .
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_buffered')
 
-        #this is just temproary so I can make it run. It will ignore the actual lab script
-        final_ram_address = 3
-        instr0 =  ndpulsegen.encode_instruction(0, 1, [1, 1, 1])
-        instr1 =  ndpulsegen.encode_instruction(1, 1, [0, 1, 0])
-        instr2 =  ndpulsegen.encode_instruction(2, 2, [1, 1, 0])
-        final_state = [0]*24
-        instr3 =  ndpulsegen.encode_instruction(3, 3, final_state)
-        instructions = [instr0, instr1, instr2, instr3]
-        self.pg.write_instructions(instructions)
+        with h5py.File(h5file, 'r') as hdf5_file:
+            # device_properties = labscript_utils.properties.get(hdf5_file, device_name, 'device_properties')
+            # self.is_master_pseudoclock = device_properties['is_master_pseudoclock']
+            # self.stop_time = device_properties.get('stop_time', None) # stop_time may be absent if we are not the master pseudoclock
+        
+            group = hdf5_file['devices/%s'%device_name]
+            pulse_program = group['PULSE_PROGRAM'][:]
 
-        #I think I want to keep this though.
+            instructions = []
+            for vals in pulse_program:
+                instruction = ndpulsegen.encode_instruction(address=vals['address'], duration=vals['duration'], 
+                                                            state=vals['channel_state'], goto_address=vals['goto_address'], 
+                                                            goto_counter=vals['goto_counter'], stop_and_wait=vals['stop_and_wait'], 
+                                                            hardware_trig_out=vals['hardware_trig_out'], notify_computer=vals['notify_computer'], 
+                                                            powerline_sync=vals['powerline_sync'])
+                instructions.append(instruction)
+            final_instr = pulse_program[-1]
+
         final_values = {}
-        for idx, value in enumerate(final_state):
-            final_values[f'channel {idx}'] = value
+        for channel, channel_state in enumerate(final_instr['channel_state']):
+            final_values[f'channel {channel}'] = channel_state
 
-        self.pg.write_device_options(final_ram_address=final_ram_address, trigger_source='either', software_run_enable=True)
+        self.pg.write_instructions(instructions)
+        self.pg.write_device_options(final_ram_address=final_instr['address'], trigger_source='either', software_run_enable=True)
         return final_values
 
 
@@ -152,12 +166,36 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
 
         # It would be nice to extend this to get all the state of the device and update the GUI, but the function that calls this 
         # can only update the channel values.
-        device_state = self.pg.get_state()
+        state_queue = self.pg.msgin_queues['devicestate']
+        state_queue.queue.clear()
+        self.pg.write_action(request_state=True)
+        device_state = state_queue.get()
         remote_values = {}
-        for idx, value in enumerate(device_state['state']):
-            remote_values[f'channel {idx}'] = value
+        for channel, channel_state in enumerate(device_state['state']):
+            remote_values[f'channel {channel}'] = channel_state
         return remote_values
 
+    ########################### From here down, it is all things I wrote
+    def disable_after_current_run(self):
+        #I need to check the FPGA code to see if this does anything when running is not true, and when run_mode is single.
+        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.disable_after_current_run')
+        self.pg.write_action(reset_run=True)
+
+    def run_enable_software(self, enabled):
+        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.run_enable_software')
+        self.pg.write_device_options(software_run_enable=enabled)
+
+    def set_runmode(self, runmode):
+        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.set_runmode')
+        self.pg.write_device_options(run_mode=runmode)
+
+    def set_triggersource(self, triggersource):
+        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.set_triggersource')
+        self.pg.write_device_options(trigger_source=triggersource)
+
+    def set_waitforpowerline(self, waitforpowerline):
+        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.set_waitforpowerline')
+        self.pg.write_powerline_trigger_options(trigger_on_powerline=waitforpowerline)
 
 def print_calling_chain():
     current_frame = inspect.currentframe()
