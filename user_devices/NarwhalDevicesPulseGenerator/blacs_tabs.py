@@ -11,6 +11,25 @@ from blacs.tab_base_classes import MODE_MANUAL, MODE_TRANSITION_TO_BUFFERED, MOD
 from qtutils import UiLoader
 from qtutils.qt import QtCore
 from qtutils.qt import QtGui
+from qtutils.qt.QtWidgets import QDoubleSpinBox, QLabel
+from math import log10, floor
+
+class CustomDoubleSpinBox(QDoubleSpinBox):
+    editingFinished = QtCore.pyqtSignal()
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.user_editing = False
+    def focusInEvent(self, event):
+        super().focusInEvent(event)
+        self.user_editing = True
+    def focusOutEvent(self, event):
+        super().focusOutEvent(event)
+        self.user_editing = False
+        self.editingFinished.emit()
+    def keyPressEvent(self, event):
+        super().keyPressEvent(event)
+        if event.key() == QtCore.Qt.Key_Enter or event.key() == QtCore.Qt.Key_Return:
+            self.clearFocus()
 
 class NarwhalDevicesPulseGeneratorTab(DeviceTab):
     # See phil's thesis p148
@@ -78,18 +97,28 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # Load status monitor (and start/stop/reset buttons) UI
         self.ui = UiLoader().load(os.path.join(os.path.dirname(os.path.realpath(__file__)),'narwhaldevicespulsegenerator.ui'))        
         self.get_tab_layout().addWidget(self.ui)
-        # Connect signals for buttons
+        # Connect signals for main controls
         self.ui.button_start.clicked.connect(self.start)
         self.ui.button_pause.toggled.connect(self.pause)
         self.ui.button_stop.clicked.connect(self.stop)
         self.ui.button_reset.clicked.connect(self.reset)
-
-        # Connect the combo boxes
         self.ui.combo_runmode.currentTextChanged.connect(self.runmode_textchanged)
-        self.ui.combo_triggersource.currentTextChanged.connect(self.triggersource_textchanged)
 
-        # connect the check boxes
+        # Connect the Trigger in controls
+        self.ui.combo_triggersource.currentTextChanged.connect(self.triggersource_textchanged)
         self.ui.check_waitforpowerline.toggled.connect(self.waitforpowerline_toggled)
+
+        self.ui.doublespin_powerlinedelay = CustomDoubleSpinBox(minimum=0, maximum=41.943030, decimals=5, suffix='0 ms')
+        # stepType=1
+        # self.ui.doublespin_powerlinedelay.setRange(0.0, 41.943030)
+        # # self.ui.doublespin_powerlinedelay.setDecimals(5)
+        # self.ui.doublespin_powerlinedelay.setSuffix('0 ms')
+        # self.ui.doublespin_powerlinedelay.setStepType(1) #AdaptiveDecimalStepType
+        self.ui.doublespin_powerlinedelay.editingFinished.connect(self.powerlinedelay_editingfinished)
+        self.ui.formLayout_2.addRow(QLabel("Delay after powerline:"), self.ui.doublespin_powerlinedelay)
+
+        # self.ui.doublespin_powerlinedelay.valueChanged.connect(self.powerlinedelay_editingfinished)
+
 
         # Add icons
         self.ui.button_start.setIcon(QtGui.QIcon(':/qtutils/fugue/control'))
@@ -101,7 +130,6 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.button_reset.setIcon(QtGui.QIcon(':/qtutils/fugue/arrow-circle'))
         self.ui.button_reset.setToolTip('Reset')
         
-
         
         # Status monitor timout
         self.statemachine_timeout_add(2000, self.status_monitor)
@@ -187,10 +215,16 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.combo_triggersource.blockSignals(True)  
         self.ui.combo_triggersource.setCurrentText(state['trigger_source'])
         self.ui.combo_triggersource.blockSignals(False)
+
         self.ui.check_waitforpowerline.blockSignals(True)
         self.ui.check_waitforpowerline.setChecked(powerline_state['trig_on_powerline'])
         self.ui.check_waitforpowerline.blockSignals(False)
-        self.ui.lineedit_powerlinedelay.setEnabled(powerline_state['trig_on_powerline'])
+
+        if not self.ui.doublespin_powerlinedelay.user_editing:
+            self.ui.doublespin_powerlinedelay.setEnabled(powerline_state['trig_on_powerline'])
+            self.ui.doublespin_powerlinedelay.blockSignals(True)
+            self.ui.doublespin_powerlinedelay.setValue(powerline_state['powerline_trigger_delay']*10E-9*1E3)
+            self.ui.doublespin_powerlinedelay.blockSignals(False)
 
         #Do some other shit too. such as:
         if notify_queue:
@@ -276,8 +310,19 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
 
     @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
     def waitforpowerline_toggled(self, checked, widget=None):
-        self.ui.lineedit_powerlinedelay.setEnabled(checked)
+        self.ui.doublespin_powerlinedelay.setEnabled(checked)
         yield(self.queue_work(self._primary_worker,'set_waitforpowerline', checked))
+        self.status_monitor()
+
+    # @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    # def powerlinedelay_editingfinished(self, value, widget=None):
+    #     yield(self.queue_work(self._primary_worker,'set_powerlinedelay', int(value/10E-9)))
+    #     self.status_monitor()
+
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def powerlinedelay_editingfinished(self, widget=None):
+        value = self.ui.doublespin_powerlinedelay.value()
+        yield(self.queue_work(self._primary_worker,'set_powerlinedelay', int(value*1E-3/10E-9)))
         self.status_monitor()
 
 

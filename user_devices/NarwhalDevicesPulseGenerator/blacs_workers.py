@@ -197,6 +197,11 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.set_waitforpowerline')
         self.pg.write_powerline_trigger_options(trigger_on_powerline=waitforpowerline)
 
+    def set_powerlinedelay(self, powerlinedelay):
+        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.powerlinedelay')
+        self.pg.write_powerline_trigger_options(powerline_trigger_delay=powerlinedelay)
+
+
 def print_calling_chain():
     current_frame = inspect.currentframe()
     while current_frame:

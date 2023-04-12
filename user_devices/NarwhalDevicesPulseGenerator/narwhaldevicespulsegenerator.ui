@@ -233,20 +233,6 @@
               </property>
              </widget>
             </item>
-            <item row="1" column="0">
-             <widget class="QLabel" name="label_16">
-              <property name="text">
-               <string>Wait for Powerline</string>
-              </property>
-             </widget>
-            </item>
-            <item row="2" column="0">
-             <widget class="QLabel" name="label_15">
-              <property name="text">
-               <string>Delay after powerline</string>
-              </property>
-             </widget>
-            </item>
             <item row="0" column="1">
              <widget class="QComboBox" name="combo_triggersource">
               <item>
@@ -271,23 +257,17 @@
               </item>
              </widget>
             </item>
+            <item row="1" column="0">
+             <widget class="QLabel" name="label_16">
+              <property name="text">
+               <string>Wait for Powerline</string>
+              </property>
+             </widget>
+            </item>
             <item row="1" column="1">
              <widget class="QCheckBox" name="check_waitforpowerline">
               <property name="text">
                <string/>
-              </property>
-             </widget>
-            </item>
-            <item row="2" column="1">
-             <widget class="QLineEdit" name="lineedit_powerlinedelay">
-              <property name="enabled">
-               <bool>false</bool>
-              </property>
-              <property name="text">
-               <string>0.0</string>
-              </property>
-              <property name="readOnly">
-               <bool>false</bool>
               </property>
              </widget>
             </item>
@@ -311,6 +291,22 @@
               </property>
              </widget>
             </item>
+            <item row="0" column="1">
+             <widget class="QDoubleSpinBox" name="doublespin_triggerduration">
+              <property name="suffix">
+               <string>0 µs</string>
+              </property>
+              <property name="minimum">
+               <double>0.000000000000000</double>
+              </property>
+              <property name="maximum">
+               <double>2.550000000000000</double>
+              </property>
+              <property name="stepType">
+               <enum>QAbstractSpinBox::AdaptiveDecimalStepType</enum>
+              </property>
+             </widget>
+            </item>
             <item row="1" column="0">
              <widget class="QLabel" name="label_19">
               <property name="text">
@@ -319,10 +315,7 @@
              </widget>
             </item>
             <item row="1" column="1">
-             <widget class="QLineEdit" name="lineedit_triggerdelay"/>
-            </item>
-            <item row="0" column="1">
-             <widget class="QLineEdit" name="lineedit_triggerduration"/>
+             <widget class="QDoubleSpinBox" name="doublespin_triggerdelay"/>
             </item>
            </layout>
           </item>
