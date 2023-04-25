@@ -36,7 +36,17 @@
       </widget>
      </item>
      <item>
-      <layout class="QHBoxLayout" name="horizontalLayout">
+      <widget class="QLabel" name="label_7">
+       <property name="text">
+        <string>Note: All manual control settings are overwritten when BLACS transiitions to buffered mode.</string>
+       </property>
+       <property name="alignment">
+        <set>Qt::AlignCenter</set>
+       </property>
+      </widget>
+     </item>
+     <item>
+      <layout class="QHBoxLayout" name="horizontalLayout_manualcontrol">
        <item>
         <spacer name="horizontalSpacer_2">
          <property name="orientation">
@@ -55,20 +65,6 @@
          <property name="text">
           <string>Run mode:</string>
          </property>
-        </widget>
-       </item>
-       <item>
-        <widget class="QComboBox" name="combo_runmode">
-         <item>
-          <property name="text">
-           <string>single</string>
-          </property>
-         </item>
-         <item>
-          <property name="text">
-           <string>continuous</string>
-          </property>
-         </item>
         </widget>
        </item>
        <item>
@@ -161,59 +157,46 @@
         </widget>
        </item>
        <item row="2" column="1">
-        <widget class="QGroupBox" name="groupBox_4">
+        <widget class="QGroupBox" name="groupBox_notifications">
          <property name="title">
           <string>Notifications</string>
          </property>
          <layout class="QVBoxLayout" name="verticalLayout_7">
           <item>
-           <layout class="QFormLayout" name="formLayout_4">
-            <item row="0" column="0">
-             <widget class="QLabel" name="label_18">
-              <property name="text">
-               <string>Notify on trigger out</string>
-              </property>
-             </widget>
-            </item>
-            <item row="1" column="0">
-             <widget class="QLabel" name="label_20">
-              <property name="text">
-               <string>Notify when finished</string>
-              </property>
-             </widget>
-            </item>
-            <item row="0" column="1">
-             <widget class="QCheckBox" name="check_notifytrigout">
-              <property name="text">
-               <string/>
-              </property>
-             </widget>
-            </item>
-            <item row="1" column="1">
-             <widget class="QCheckBox" name="check_notifyfinished">
-              <property name="text">
-               <string/>
-              </property>
-             </widget>
+           <layout class="QVBoxLayout" name="verticalLayout_notifications">
+            <item>
+             <layout class="QFormLayout" name="formLayout_4">
+              <item row="0" column="0">
+               <widget class="QLabel" name="label_18">
+                <property name="text">
+                 <string>Notify on trigger out</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="0">
+               <widget class="QLabel" name="label_20">
+                <property name="text">
+                 <string>Notify when finished</string>
+                </property>
+               </widget>
+              </item>
+              <item row="1" column="1">
+               <widget class="QCheckBox" name="check_notifyfinished">
+                <property name="text">
+                 <string/>
+                </property>
+               </widget>
+              </item>
+              <item row="0" column="1">
+               <widget class="QCheckBox" name="check_notifytrigout">
+                <property name="text">
+                 <string/>
+                </property>
+               </widget>
+              </item>
+             </layout>
             </item>
            </layout>
-          </item>
-          <item>
-           <widget class="QLabel" name="label_9">
-            <property name="text">
-             <string>Notification:</string>
-            </property>
-           </widget>
-          </item>
-          <item>
-           <widget class="QTextBrowser" name="text_notifications">
-            <property name="sizePolicy">
-             <sizepolicy hsizetype="Expanding" vsizetype="Expanding">
-              <horstretch>0</horstretch>
-              <verstretch>0</verstretch>
-             </sizepolicy>
-            </property>
-           </widget>
           </item>
          </layout>
         </widget>
@@ -225,46 +208,15 @@
          </property>
          <layout class="QVBoxLayout" name="verticalLayout_10">
           <item>
-           <layout class="QFormLayout" name="formLayout_2">
+           <layout class="QFormLayout" name="formLayout_triggerin">
             <item row="0" column="0">
-             <widget class="QLabel" name="label_14">
-              <property name="text">
-               <string>Trigger source</string>
-              </property>
-             </widget>
-            </item>
-            <item row="0" column="1">
-             <widget class="QComboBox" name="combo_triggersource">
-              <item>
-               <property name="text">
-                <string>software</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>hardware</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>either</string>
-               </property>
-              </item>
-              <item>
-               <property name="text">
-                <string>single_hardware</string>
-               </property>
-              </item>
-             </widget>
-            </item>
-            <item row="1" column="0">
              <widget class="QLabel" name="label_16">
               <property name="text">
                <string>Wait for Powerline</string>
               </property>
              </widget>
             </item>
-            <item row="1" column="1">
+            <item row="0" column="1">
              <widget class="QCheckBox" name="check_waitforpowerline">
               <property name="text">
                <string/>
@@ -283,41 +235,7 @@
          </property>
          <layout class="QVBoxLayout" name="verticalLayout_9">
           <item>
-           <layout class="QFormLayout" name="formLayout_3">
-            <item row="0" column="0">
-             <widget class="QLabel" name="label_17">
-              <property name="text">
-               <string>Duration</string>
-              </property>
-             </widget>
-            </item>
-            <item row="0" column="1">
-             <widget class="QDoubleSpinBox" name="doublespin_triggerduration">
-              <property name="suffix">
-               <string>0 µs</string>
-              </property>
-              <property name="minimum">
-               <double>0.000000000000000</double>
-              </property>
-              <property name="maximum">
-               <double>2.550000000000000</double>
-              </property>
-              <property name="stepType">
-               <enum>QAbstractSpinBox::AdaptiveDecimalStepType</enum>
-              </property>
-             </widget>
-            </item>
-            <item row="1" column="0">
-             <widget class="QLabel" name="label_19">
-              <property name="text">
-               <string>Delay</string>
-              </property>
-             </widget>
-            </item>
-            <item row="1" column="1">
-             <widget class="QDoubleSpinBox" name="doublespin_triggerdelay"/>
-            </item>
-           </layout>
+           <layout class="QFormLayout" name="formLayout_triggerout"/>
           </item>
          </layout>
         </widget>

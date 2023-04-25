@@ -4,6 +4,7 @@ I'm not sure how I am supposed to import other classes from files within this de
 # from .blacs_workers import NarwhalDevicesPulseGeneratorWorker
 
 import os
+import datetime
 
 from blacs.device_base_class import DeviceTab, define_state, MODE_BUFFERED
 from blacs.tab_base_classes import MODE_MANUAL, MODE_TRANSITION_TO_BUFFERED, MODE_TRANSITION_TO_MANUAL, MODE_BUFFERED  
@@ -11,8 +12,7 @@ from blacs.tab_base_classes import MODE_MANUAL, MODE_TRANSITION_TO_BUFFERED, MOD
 from qtutils import UiLoader
 from qtutils.qt import QtCore
 from qtutils.qt import QtGui
-from qtutils.qt.QtWidgets import QDoubleSpinBox, QLabel
-from math import log10, floor
+from qtutils.qt.QtWidgets import QDoubleSpinBox, QComboBox, QTextEdit, QLabel
 
 class CustomDoubleSpinBox(QDoubleSpinBox):
     editingFinished = QtCore.pyqtSignal()
@@ -30,6 +30,46 @@ class CustomDoubleSpinBox(QDoubleSpinBox):
         super().keyPressEvent(event)
         if event.key() == QtCore.Qt.Key_Enter or event.key() == QtCore.Qt.Key_Return:
             self.clearFocus()
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+class CustomComboBox(QComboBox):
+    def __init__(self, *args, **kwargs): 
+        super().__init__(*args, **kwargs)
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
+
+class CustomTextEdit(QTextEdit):
+    def __init__(self, max_lines=10, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_lines = max_lines
+        self.current_lines = 0
+    def add_text_to_top(self, text):
+        cursor = self.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.Start)
+        cursor.insertText(text + '\n')
+        self.setTextCursor(cursor)
+        self.current_lines += 1
+        if self.current_lines > self.max_lines:
+            self.remove_last_line()
+    def remove_last_line(self):
+        cursor = self.textCursor()
+        cursor.movePosition(QtGui.QTextCursor.End)
+        cursor.movePosition(QtGui.QTextCursor.StartOfBlock, QtGui.QTextCursor.KeepAnchor)
+        cursor.removeSelectedText()
+        cursor.deletePreviousChar()
+        self.current_lines -= 1
+    def wheelEvent(self, event):
+        if self.hasFocus():
+            super().wheelEvent(event)
+        else:
+            event.ignore()
 
 class NarwhalDevicesPulseGeneratorTab(DeviceTab):
     # See phil's thesis p148
@@ -102,22 +142,35 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.button_pause.toggled.connect(self.pause)
         self.ui.button_stop.clicked.connect(self.stop)
         self.ui.button_reset.clicked.connect(self.reset)
+        self.ui.combo_runmode = CustomComboBox(focusPolicy=QtCore.Qt.StrongFocus)
+        self.ui.combo_runmode.addItems(['single', 'continuous'])
         self.ui.combo_runmode.currentTextChanged.connect(self.runmode_textchanged)
+        self.ui.horizontalLayout_manualcontrol.insertWidget(2, self.ui.combo_runmode)
 
-        # Connect the Trigger in controls
+        # Connect/make the Trigger in controls
+        self.ui.combo_triggersource = CustomComboBox(focusPolicy=QtCore.Qt.StrongFocus)
+        self.ui.combo_triggersource.addItems(['software', 'hardware', 'either', 'single_hardware'])
         self.ui.combo_triggersource.currentTextChanged.connect(self.triggersource_textchanged)
+        self.ui.formLayout_triggerin.insertRow(0, QLabel("Trigger source"), self.ui.combo_triggersource)
         self.ui.check_waitforpowerline.toggled.connect(self.waitforpowerline_toggled)
-
-        self.ui.doublespin_powerlinedelay = CustomDoubleSpinBox(minimum=0, maximum=41.943030, decimals=5, suffix='0 ms')
-        # stepType=1
-        # self.ui.doublespin_powerlinedelay.setRange(0.0, 41.943030)
-        # # self.ui.doublespin_powerlinedelay.setDecimals(5)
-        # self.ui.doublespin_powerlinedelay.setSuffix('0 ms')
-        # self.ui.doublespin_powerlinedelay.setStepType(1) #AdaptiveDecimalStepType
+        self.ui.doublespin_powerlinedelay = CustomDoubleSpinBox(minimum=0, maximum=41.943030, decimals=5, suffix='0 ms', focusPolicy=QtCore.Qt.StrongFocus)
         self.ui.doublespin_powerlinedelay.editingFinished.connect(self.powerlinedelay_editingfinished)
-        self.ui.formLayout_2.addRow(QLabel("Delay after powerline:"), self.ui.doublespin_powerlinedelay)
+        self.ui.formLayout_triggerin.addRow(QLabel("Delay after powerline"), self.ui.doublespin_powerlinedelay)
 
-        # self.ui.doublespin_powerlinedelay.valueChanged.connect(self.powerlinedelay_editingfinished)
+        # Connect/make the Trigger out controls
+        self.ui.doublespin_triggerduration = CustomDoubleSpinBox(minimum=0, maximum=2.55, decimals=2, suffix='0 μs', value=0.01, singleStep=0.01, focusPolicy=QtCore.Qt.StrongFocus)
+        self.ui.doublespin_triggerduration.editingFinished.connect(self.triggerduration_editingfinished)
+        self.ui.formLayout_triggerout.addRow(QLabel("Duration"), self.ui.doublespin_triggerduration)  
+        self.ui.doublespin_triggerdelay = CustomDoubleSpinBox(minimum=0, maximum=720575940.37927935, decimals=8, suffix='0 s', value=0, singleStep=0.00000001, focusPolicy=QtCore.Qt.StrongFocus)
+        self.ui.doublespin_triggerdelay.editingFinished.connect(self.triggerdelay_editingfinished)
+        self.ui.formLayout_triggerout.addRow(QLabel("Delay"), self.ui.doublespin_triggerdelay)  
+
+        # Notifications
+        self.ui.check_notifytrigout.toggled.connect(self.notifytrigout_toggled)
+        self.ui.check_notifyfinished.toggled.connect(self.notifyfinished_toggled)
+        self.ui.text_notifications = CustomTextEdit(max_lines=100, focusPolicy=QtCore.Qt.StrongFocus)
+        self.ui.text_notifications.setReadOnly(True)
+        self.ui.verticalLayout_notifications.addWidget(self.ui.text_notifications)
 
 
         # Add icons
@@ -173,6 +226,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # When called with a queue, this function writes to the queue
         # when the pulseblaster is waiting. This indicates the end of
         # an experimental run.
+        '''No idea what the hell that means, But it might be important?'''
         
         # self.status, waits_pending, time_based_shot_over = yield(self.queue_work(self._primary_worker,'check_status'))
         
@@ -220,11 +274,38 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.check_waitforpowerline.setChecked(powerline_state['trig_on_powerline'])
         self.ui.check_waitforpowerline.blockSignals(False)
 
-        if not self.ui.doublespin_powerlinedelay.user_editing:
+        if not self.ui.doublespin_powerlinedelay.user_editing: 
             self.ui.doublespin_powerlinedelay.setEnabled(powerline_state['trig_on_powerline'])
             self.ui.doublespin_powerlinedelay.blockSignals(True)
             self.ui.doublespin_powerlinedelay.setValue(powerline_state['powerline_trigger_delay']*10E-9*1E3)
             self.ui.doublespin_powerlinedelay.blockSignals(False)
+
+        # Trigger out
+        if not self.ui.doublespin_triggerduration.user_editing: 
+            self.ui.doublespin_triggerduration.blockSignals(True)
+            self.ui.doublespin_triggerduration.setValue(state['trigger_out_length']*10E-9*1E6)
+            self.ui.doublespin_triggerduration.blockSignals(False)      
+        if not self.ui.doublespin_triggerdelay.user_editing: 
+            self.ui.doublespin_triggerdelay.blockSignals(True)
+            self.ui.doublespin_triggerdelay.setValue(state['trigger_out_delay']*10E-9)
+            self.ui.doublespin_triggerdelay.blockSignals(False)  
+
+        # Notifications
+        self.ui.check_notifytrigout.blockSignals(True)
+        self.ui.check_notifytrigout.setChecked(state['notify_on_main_trig_out'])
+        self.ui.check_notifytrigout.blockSignals(False)
+        self.ui.check_notifyfinished.blockSignals(True)
+        self.ui.check_notifyfinished.setChecked(state['notify_on_run_finished'])
+        self.ui.check_notifyfinished.blockSignals(False)
+
+        now = datetime.datetime.now()
+        for notification in notifications:
+            if notification['finished_notify']:
+                self.ui.text_notifications.add_text_to_top(now.strftime('%H:%M:%S') + ': Run finished.')
+            if notification['trigger_notify']:
+                self.ui.text_notifications.add_text_to_top(now.strftime('%H:%M:%S') + ': Main trigger out activated.')
+            if notification['address_notify']:
+                self.ui.text_notifications.add_text_to_top(now.strftime('%H:%M:%S') + f": Instruction {notification['address']} activated.")
 
         #Do some other shit too. such as:
         if notify_queue:
@@ -314,17 +395,33 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         yield(self.queue_work(self._primary_worker,'set_waitforpowerline', checked))
         self.status_monitor()
 
-    # @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
-    # def powerlinedelay_editingfinished(self, value, widget=None):
-    #     yield(self.queue_work(self._primary_worker,'set_powerlinedelay', int(value/10E-9)))
-    #     self.status_monitor()
-
     @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
     def powerlinedelay_editingfinished(self, widget=None):
         value = self.ui.doublespin_powerlinedelay.value()
         yield(self.queue_work(self._primary_worker,'set_powerlinedelay', int(value*1E-3/10E-9)))
         self.status_monitor()
 
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def triggerduration_editingfinished(self, widget=None):
+        value = self.ui.doublespin_triggerduration.value()
+        yield(self.queue_work(self._primary_worker,'set_triggerduration', int(value*1E-6/10E-9)))
+        self.status_monitor()
+
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def triggerdelay_editingfinished(self, widget=None):
+        value = self.ui.doublespin_triggerdelay.value()
+        yield(self.queue_work(self._primary_worker,'set_triggerdelay', int(value/10E-9)))
+        self.status_monitor()
+
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def notifytrigout_toggled(self, checked, widget=None):
+        yield(self.queue_work(self._primary_worker,'set_notifytrigout', checked))
+        self.status_monitor()
+
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    def notifyfinished_toggled(self, checked, widget=None):
+        yield(self.queue_work(self._primary_worker,'set_notifyfinished', checked))
+        self.status_monitor()
 
 '''So I should just make whatever buttons make sence for the NDPG. I don't need to follow
 the pulseblaster layout.
