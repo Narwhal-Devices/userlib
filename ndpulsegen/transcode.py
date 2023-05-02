@@ -158,7 +158,7 @@ def decode_devicestate(message):
     software_run_enable =       decode_lookup['software_run_enable'][software_run_enable_tag]
     hardware_run_enable =       decode_lookup['hardware_run_enable'][hardware_run_enable_tag]
     notify_on_run_finished =    decode_lookup['notify_on_run_finished'][notify_on_run_finished_tag]
-    return {'state':state, 'final_ram_address':final_ram_address, 'trigger_out_delay':trigger_out_delay, 'run_mode':run_mode, 'trigger_source':trigger_source, 'notify_on_main_trig_out':notify_on_main_trig_out, 'notify_on_run_finished':notify_on_run_finished, 'trigger_out_length':trigger_out_length, 'clock_source':clock_source, 'running':running, 'software_run_enable':software_run_enable, 'hardware_run_enable':hardware_run_enable, 'current_address_approx':current_ram_address}
+    return {'state':state, 'final_ram_address':final_ram_address, 'trigger_out_delay':trigger_out_delay, 'run_mode':run_mode, 'trigger_source':trigger_source, 'notify_on_main_trig_out':notify_on_main_trig_out, 'notify_on_run_finished':notify_on_run_finished, 'trigger_out_length':trigger_out_length, 'clock_source':clock_source, 'running':running, 'software_run_enable':software_run_enable, 'hardware_run_enable':hardware_run_enable, 'current_address':current_ram_address}
 
 def decode_powerlinestate(message):
     ''' 

@@ -45,7 +45,6 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         for that (and everything else) and then return that as well as everything else'''
         state_queue = self.pg.msgin_queues['devicestate']
         powerline_state_queue = self.pg.msgin_queues['powerlinestate']
-        notification_queue = self.pg.msgin_queues['notification']
         #Empty the state queues incase there is old data in them
         state_queue.queue.clear()
         powerline_state_queue.queue.clear()
@@ -61,10 +60,22 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         notifications = [] 
         try:
             while True:
-                notifications.append(notification_queue.get(block=False))
+                notifications.append(self.pg.msgin_queues['notification'].get(block=False))
         except queue.Empty as ex:
             pass
-        return notifications, state, powerline_state
+        pg_comms_in_errors = [] 
+        try:
+            while True:
+                pg_comms_in_errors.append(self.pg.msgin_queues['error'].get(block=False))
+        except queue.Empty as ex:
+            pass
+        bytesdropped = [] 
+        try:
+            while True:
+                bytesdropped.append(self.pg.msgin_queues['bytes_dropped'].get(block=False))
+        except queue.Empty as ex:
+            pass
+        return state, powerline_state, notifications, pg_comms_in_errors, bytesdropped
 
 
     def shutdown(self):

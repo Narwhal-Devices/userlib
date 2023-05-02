@@ -105,10 +105,11 @@ class PulseGenerator():
                 break
             # Normally the read will timeout and return empty, but if it returns someting try to read the reminder of the message
             if byte_message_identifier:
+                timestamp = time.time()
                 message_identifier, = struct.unpack('B', byte_message_identifier)
                 # Only read more bytes if the identifier is valid
                 if message_identifier not in transcode.msgin_decodeinfo.keys():
-                    self.msgin_queues['bytes_dropped'].put(message_identifier)
+                    self.msgin_queues['bytes_dropped'].put({'message_identifier':message_identifier, 'message':None, 'timestamp':timestamp})
                 else:
                     decodeinfo = transcode.msgin_decodeinfo[message_identifier]
                     message_length = decodeinfo['message_length'] - 1
@@ -119,11 +120,12 @@ class PulseGenerator():
                         break   
                     # A random byte still a chance of being valid, so the read could timeout without reading a whole message worth of bytes
                     if len(byte_message) != message_length:
-                        self.msgin_queues['bytes_dropped'].put(message_identifier)
+                        self.msgin_queues['bytes_dropped'].put({'message_identifier':message_identifier, 'message':None, 'timestamp':timestamp})
                     else:
                         # At this point, just decode the message and put it in the queue corresponding to its type.
                         decode_function = decodeinfo['decode_function']
                         message = decode_function(byte_message)
+                        message['timestamp'] = timestamp
                         queue_name = decodeinfo['message_type']
                         self.msgin_queues[queue_name].put(message)
 

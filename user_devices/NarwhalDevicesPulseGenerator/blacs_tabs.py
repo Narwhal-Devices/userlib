@@ -4,7 +4,7 @@ I'm not sure how I am supposed to import other classes from files within this de
 # from .blacs_workers import NarwhalDevicesPulseGeneratorWorker
 
 import os
-import datetime
+from datetime import datetime
 
 from blacs.device_base_class import DeviceTab, define_state, MODE_BUFFERED
 from blacs.tab_base_classes import MODE_MANUAL, MODE_TRANSITION_TO_BUFFERED, MODE_TRANSITION_TO_MANUAL, MODE_BUFFERED  
@@ -50,20 +50,17 @@ class CustomTextEdit(QTextEdit):
         super().__init__(*args, **kwargs)
         self.max_lines = max_lines
         self.current_lines = 0
-    def add_text_to_top(self, text):
-        cursor = self.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.Start)
-        cursor.insertText(text + '\n')
-        self.setTextCursor(cursor)
+    def append(self, text):
+        super().append(text)
         self.current_lines += 1
         if self.current_lines > self.max_lines:
-            self.remove_last_line()
-    def remove_last_line(self):
+            self.remove_oldest_line()
+    def remove_oldest_line(self):
         cursor = self.textCursor()
-        cursor.movePosition(QtGui.QTextCursor.End)
-        cursor.movePosition(QtGui.QTextCursor.StartOfBlock, QtGui.QTextCursor.KeepAnchor)
+        cursor.movePosition(QtGui.QTextCursor.Start)
+        cursor.movePosition(QtGui.QTextCursor.EndOfBlock, QtGui.QTextCursor.KeepAnchor)
         cursor.removeSelectedText()
-        cursor.deletePreviousChar()
+        cursor.deleteChar()
         self.current_lines -= 1
     def wheelEvent(self, event):
         if self.hasFocus():
@@ -147,6 +144,16 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.combo_runmode.currentTextChanged.connect(self.runmode_textchanged)
         self.ui.horizontalLayout_manualcontrol.insertWidget(2, self.ui.combo_runmode)
 
+        # Add icons to main controls
+        self.ui.button_start.setIcon(QtGui.QIcon(':/qtutils/fugue/control'))
+        self.ui.button_start.setToolTip('Start')
+        self.ui.button_pause.setIcon(QtGui.QIcon(':/qtutils/fugue/control-pause'))
+        self.ui.button_pause.setToolTip('Software enable/disable')
+        self.ui.button_stop.setIcon(QtGui.QIcon(':/qtutils/fugue/control-stop-square'))
+        self.ui.button_stop.setToolTip('Stop after current run')
+        self.ui.button_reset.setIcon(QtGui.QIcon(':/qtutils/fugue/arrow-circle'))
+        self.ui.button_reset.setToolTip('Reset')
+
         # Connect/make the Trigger in controls
         self.ui.combo_triggersource = CustomComboBox(focusPolicy=QtCore.Qt.StrongFocus)
         self.ui.combo_triggersource.addItems(['software', 'hardware', 'either', 'single_hardware'])
@@ -168,22 +175,10 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # Notifications
         self.ui.check_notifytrigout.toggled.connect(self.notifytrigout_toggled)
         self.ui.check_notifyfinished.toggled.connect(self.notifyfinished_toggled)
-        self.ui.text_notifications = CustomTextEdit(max_lines=100, focusPolicy=QtCore.Qt.StrongFocus)
+        self.ui.text_notifications = CustomTextEdit(max_lines=10000, focusPolicy=QtCore.Qt.StrongFocus)
         self.ui.text_notifications.setReadOnly(True)
         self.ui.verticalLayout_notifications.addWidget(self.ui.text_notifications)
 
-
-        # Add icons
-        self.ui.button_start.setIcon(QtGui.QIcon(':/qtutils/fugue/control'))
-        self.ui.button_start.setToolTip('Start')
-        self.ui.button_pause.setIcon(QtGui.QIcon(':/qtutils/fugue/control-pause'))
-        self.ui.button_pause.setToolTip('Software enable/disable')
-        self.ui.button_stop.setIcon(QtGui.QIcon(':/qtutils/fugue/control-stop-square'))
-        self.ui.button_stop.setToolTip('Stop after current run')
-        self.ui.button_reset.setIcon(QtGui.QIcon(':/qtutils/fugue/arrow-circle'))
-        self.ui.button_reset.setToolTip('Reset')
-        
-        
         # Status monitor timout
         self.statemachine_timeout_add(2000, self.status_monitor)
     
@@ -226,11 +221,14 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # When called with a queue, this function writes to the queue
         # when the pulseblaster is waiting. This indicates the end of
         # an experimental run.
-        '''No idea what the hell that means, But it might be important?'''
+        '''No idea what the hell that means, But it might be important?
+        Actually, it looks pretty simple. Just have a look at the pulsblasterminimallymodified version.
+        For me, Im pretty sure I can just look for a run finished notification (since I can inforce that this setting is always true)
+        '''
         
         # self.status, waits_pending, time_based_shot_over = yield(self.queue_work(self._primary_worker,'check_status'))
         
-        notifications, state, powerline_state = yield(self.queue_work(self._primary_worker,'check_status'))
+        state, powerline_state, notifications, pg_comms_in_errors, bytesdropped_error = yield(self.queue_work(self._primary_worker,'check_status'))
 
         # Synchronisation
         powerline_freq = 1/(powerline_state['powerline_period']*10E-9)*powerline_state['powerline_locked']
@@ -238,7 +236,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.label_referenceclock.setText(f"{state['clock_source']}")
 
         # Status
-        self.ui.label_currentaddress.setText(f"{state['current_address_approx']}")
+        self.ui.label_currentaddress.setText(f"{state['current_address']}")
         self.ui.label_finaladdress.setText(f"{state['final_ram_address']}")
         tick_pixmap = QtGui.QIcon(':/qtutils/fugue/tick').pixmap(QtCore.QSize(16, 16))
         cross_pixmap = QtGui.QIcon(':/qtutils/fugue/cross').pixmap(QtCore.QSize(16, 16))
@@ -297,15 +295,20 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.check_notifyfinished.blockSignals(True)
         self.ui.check_notifyfinished.setChecked(state['notify_on_run_finished'])
         self.ui.check_notifyfinished.blockSignals(False)
-
-        now = datetime.datetime.now()
         for notification in notifications:
-            if notification['finished_notify']:
-                self.ui.text_notifications.add_text_to_top(now.strftime('%H:%M:%S') + ': Run finished.')
+            time_string = str(datetime.fromtimestamp(notification['timestamp'])).split()[1][:-3]
             if notification['trigger_notify']:
-                self.ui.text_notifications.add_text_to_top(now.strftime('%H:%M:%S') + ': Main trigger out activated.')
+                self.ui.text_notifications.append(time_string + ': Main trigger out activated.')
             if notification['address_notify']:
-                self.ui.text_notifications.add_text_to_top(now.strftime('%H:%M:%S') + f": Instruction {notification['address']} activated.")
+                self.ui.text_notifications.append(time_string + f": Instruction {notification['address']} activated.")
+            if notification['finished_notify']:
+                self.ui.text_notifications.append(time_string + ': Run finished.')
+        for comm_error in pg_comms_in_errors:
+            time_string = str(datetime.fromtimestamp(comm_error['timestamp'])).split()[1][:-3]
+            self.ui.text_notifications.append(time_string + f": Error - Pulse Generator recieved an invalid message from the host. {str(comm_error)}")
+        for dropped_error in bytesdropped_error:
+            time_string = str(datetime.fromtimestamp(dropped_error['timestamp'])).split()[1][:-3]
+            self.ui.text_notifications.append(time_string + f": Error - The host recieved an invalid message from the Pulse Generator. {str(dropped_error)}")
 
         #Do some other shit too. such as:
         if notify_queue:
