@@ -180,9 +180,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.verticalLayout_notifications.addWidget(self.ui.text_notifications)
 
         # Status monitor timout
-        self.statemachine_timeout_add(2000, self.status_monitor)
-    
-
+        self.statemachine_timeout_add(1000, self.status_monitor)
 
     def get_child_from_connection_table(self, parent_device_name, port):
         # Don't know what this does, but I think it is ok to leave it.
@@ -211,23 +209,39 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
             return DeviceTab.get_child_from_connection_table(self, parent_device_name, port)
     
 
-    
-    #These call methods of the blacs_worker, which send signals to the device. Need to decide what to have. start_run is compulsury, the others I can choose what I like.
+    '''The decorator says what state the outer state machine can be in to allow calls to this method. 
+    The True, means only run the most recent entry for a method is run if duplicate entries for the GUI method
+    exist in the queue (albeit with different arguments)'''
+    ###################### Compulsory method called by BLACS internals ###################################
+    @define_state(MODE_BUFFERED,True)  
+    def start_run(self, notify_queue):
+        """Starts the Pulse Generator, notifying the queue manager when
+        the run is over. The notify_queue is passed to the status_monitor when it is called by this 
+        timer, and it is up to the status_monitor to work out when the run is done"""
+        self.statemachine_timeout_remove(self.status_monitor)
+        yield(self.queue_work(self._primary_worker,'start_run'))
+        self.statemachine_timeout_add(100,self.status_monitor,notify_queue)
 
-    # This function gets the status of the Pulseblaster from the spinapi,
-    # and updates the front panel widgets!
+    #These call methods of the blacs_worker, which send signals to the device. Need to decide what to have. start_run is compulsury, the others I can choose what I like.
+    
+    ###################### Methods dealing with BLACS_tab GUI ###################################
     @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
     def status_monitor(self,notify_queue=None):
-        # When called with a queue, this function writes to the queue
-        # when the pulseblaster is waiting. This indicates the end of
-        # an experimental run.
-        '''No idea what the hell that means, But it might be important?
-        Actually, it looks pretty simple. Just have a look at the pulsblasterminimallymodified version.
-        For me, Im pretty sure I can just look for a run finished notification (since I can inforce that this setting is always true)
-        '''
-        
-        # self.status, waits_pending, time_based_shot_over = yield(self.queue_work(self._primary_worker,'check_status'))
-        
+        """Gets the status of the Pulse Generator from the worker.
+        This is called by a timer in three ways:
+            By a timer set up when GUI is initialised, with a fairly infrequent call.
+            By a timer set up by the start_run method above, quite rapidly.
+            By the methods that handle the interactive GUI widgets, to keep them in sync.
+        When called from start_run, a queue is also passed. In this case, it is
+        the job of status_monitor:
+            To update the GUI as normal
+            BUT ALSO to figure out when the run is done, and when it is, to put 'done.' in the queue.
+                This indicates the end of an experimental run.
+        Args:
+            notify_queue (:class:`~queue.Queue`): Queue to notify when
+                the experiment is done.
+
+        """        
         state, powerline_state, notifications, pg_comms_in_errors, bytesdropped_error = yield(self.queue_work(self._primary_worker,'check_status'))
 
         # Synchronisation
@@ -257,8 +271,14 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.button_pause.setChecked(not state['software_run_enable'])
         self.ui.button_pause.blockSignals(False)
 
+        
+        # Why block signals? Because other parts of labscript can update the Pulse Generator
+        # interneal settings, without going through the GUI. When the status_monitor then updates
+        # the GUI widgets to reflect the internal state of the Pulse Generator, this change would
+        # ordinarily trigger one of the widget_changed methods that I registered. This would then
+        # change update the setting again, which is unnecessary and therefor wasetful.
+
         # Run mode
-        #Why block signals? Because other parts of labscript can update the runmode, the runmode can change without me clicking the box. We don't want/need to send this signal again if another part of the program has already changed it.
         self.ui.combo_runmode.blockSignals(True)  
         self.ui.combo_runmode.setCurrentText(state['run_mode'])
         self.ui.combo_runmode.blockSignals(False)
@@ -289,6 +309,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
             self.ui.doublespin_triggerdelay.blockSignals(False)  
 
         # Notifications
+        finished_notification_received = False
         self.ui.check_notifytrigout.blockSignals(True)
         self.ui.check_notifytrigout.setChecked(state['notify_on_main_trig_out'])
         self.ui.check_notifytrigout.blockSignals(False)
@@ -303,6 +324,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
                 self.ui.text_notifications.append(time_string + f": Instruction {notification['address']} activated.")
             if notification['finished_notify']:
                 self.ui.text_notifications.append(time_string + ': Run finished.')
+                finished_notification_received = True
         for comm_error in pg_comms_in_errors:
             time_string = str(datetime.fromtimestamp(comm_error['timestamp'])).split()[1][:-3]
             self.ui.text_notifications.append(time_string + f": Error - Pulse Generator recieved an invalid message from the host. {str(comm_error)}")
@@ -310,125 +332,77 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
             time_string = str(datetime.fromtimestamp(dropped_error['timestamp'])).split()[1][:-3]
             self.ui.text_notifications.append(time_string + f": Error - The host recieved an invalid message from the Pulse Generator. {str(dropped_error)}")
 
-        #Do some other shit too. such as:
-        if notify_queue:
-            for notification in notifications:
-                if notification['finished_notify']:
-                    notify_queue.put('done')            
-                    self.statemachine_timeout_remove(self.status_monitor)
-                    self.statemachine_timeout_add(2000,self.status_monitor)
-                    break
+        # Determine the done condition.
+        # Possible corner cases:
+        # The device might not finish because one of the manual controls was used (eg, abort).
+        #       I think I will disable all manual controls during buffered mode to avoid this.
+        #       The run can also be aborted by the official BLACS button, which calls the abort_buffered 
+        #           method of the worker. But in this case, presumably I don't need to put 'done' in the queue.
+        # So, for now, I will say there are no corner cases, which meand I dont need to check for some combination
+        # of state that means the thing is done, I can just check the notifications.
+        # One possible way to keep all the manual controls active, is to pass the notify_queue to the reset method
+        # and have that method also pass done, but not sure if that can be done, or if it is a good idea.
+        if notify_queue is not None and finished_notification_received:
+            notify_queue.put('done')
+            self.statemachine_timeout_remove(self.status_monitor)
+            self.statemachine_timeout_add(1000,self.status_monitor)
 
-        # if self.programming_scheme == 'pb_start/BRANCH':
-        #     done_condition = self.status['waiting']
-        # elif self.programming_scheme == 'pb_stop_programming/STOP':
-        #     done_condition = self.status['stopped']
-            
-        # if time_based_shot_over is not None:
-        #     done_condition = time_based_shot_over
-            
-        # if notify_queue is not None and done_condition and not waits_pending:
-        #     # Experiment is over. Tell the queue manager about it, then
-        #     # set the status checking timeout back to every 2 seconds
-        #     # with no queue.
-        #     notify_queue.put('done')
-        #     self.statemachine_timeout_remove(self.status_monitor)
-        #     self.statemachine_timeout_add(2000,self.status_monitor)
-        #     if self.programming_scheme == 'pb_stop_programming/STOP':
-        #         # Not clear that on all models the outputs will be correct after being
-        #         # stopped this way, so we do program_manual with current values to be sure:
-        #         self.program_device()
-        # # Update widgets with new status
-        # for state in self.status_states:
-        #     if self.status[state]:
-        #         icon = QtGui.QIcon(':/qtutils/fugue/tick')
-        #     else:
-        #         icon = QtGui.QIcon(':/qtutils/fugue/cross')
-            
-        #     pixmap = icon.pixmap(QtCore.QSize(16, 16))
-        #     self.status_widgets[state].setPixmap(pixmap)
-        
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
+    # I may need to somehow disable all of the buttons in and user entry widgets during the "transition_to_buffered" phase
+    @define_state(MODE_MANUAL,True)  
     def start(self,widget=None):
         yield(self.queue_work(self._primary_worker,'start_run'))
         self.status_monitor()
 
-    '''The decorator says what state the outer state machine can be in to allow calls to this method. 
-    The True, means only run the most recent entry for a method is run if duplicate entries for the GUI method
-    exist in the queue (albeit with different arguments)'''
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def pause(self, checked, widget=None):
         enabled = not checked
         yield(self.queue_work(self._primary_worker,'run_enable_software', enabled))
         self.status_monitor()
         
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
+    @define_state(MODE_MANUAL,True)  
     def stop(self,widget=None):
         yield(self.queue_work(self._primary_worker,'disable_after_current_run'))
         self.status_monitor()
         
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
+    @define_state(MODE_MANUAL,True)  
     def reset(self,widget=None):
         yield(self.queue_work(self._primary_worker,'abort_buffered'))
         # At the moment, abort_buffered jsut sends a reset run anyway, but if I cange it in the future, I might have to make a separate function.
         self.status_monitor()
-    
-    @define_state(MODE_BUFFERED,True)  
-    def start_run(self, notify_queue):
-        """Starts the Pulseblaster, notifying the queue manager when
-        the run is over"""
-        self.statemachine_timeout_remove(self.status_monitor)
-        self.start()
-        self.statemachine_timeout_add(100,self.status_monitor,notify_queue)
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def runmode_textchanged(self, runmode, widget=None):
         yield(self.queue_work(self._primary_worker,'set_runmode', runmode))
-        self.status_monitor()
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def triggersource_textchanged(self, triggersource, widget=None):
         yield(self.queue_work(self._primary_worker,'set_triggersource', triggersource))
-        self.status_monitor()
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def waitforpowerline_toggled(self, checked, widget=None):
         self.ui.doublespin_powerlinedelay.setEnabled(checked)
         yield(self.queue_work(self._primary_worker,'set_waitforpowerline', checked))
-        self.status_monitor()
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def powerlinedelay_editingfinished(self, widget=None):
         value = self.ui.doublespin_powerlinedelay.value()
         yield(self.queue_work(self._primary_worker,'set_powerlinedelay', int(value*1E-3/10E-9)))
-        self.status_monitor()
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def triggerduration_editingfinished(self, widget=None):
         value = self.ui.doublespin_triggerduration.value()
         yield(self.queue_work(self._primary_worker,'set_triggerduration', int(value*1E-6/10E-9)))
-        self.status_monitor()
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def triggerdelay_editingfinished(self, widget=None):
         value = self.ui.doublespin_triggerdelay.value()
         yield(self.queue_work(self._primary_worker,'set_triggerdelay', int(value/10E-9)))
-        self.status_monitor()
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def notifytrigout_toggled(self, checked, widget=None):
         yield(self.queue_work(self._primary_worker,'set_notifytrigout', checked))
-        self.status_monitor()
 
-    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True) 
+    @define_state(MODE_MANUAL,True) 
     def notifyfinished_toggled(self, checked, widget=None):
         yield(self.queue_work(self._primary_worker,'set_notifyfinished', checked))
-        self.status_monitor()
-
-'''So I should just make whatever buttons make sence for the NDPG. I don't need to follow
-the pulseblaster layout.
-
-
-
-'''

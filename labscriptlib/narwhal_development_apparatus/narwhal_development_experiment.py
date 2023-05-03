@@ -43,7 +43,7 @@ if __name__ == '__main__':
     digital_out1.go_low(t)
 
     # Wait for 2 seconds
-    t += 50E-9
+    t += 3
 
     # Stop the experiment shot with stop()
     stop(t)

@@ -147,8 +147,8 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # be placed back into manual mode
         # return True on success
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_manual')
-        notification, state, powerline_state = self.check_status()
-        if not state['running'] and state['current_address_approx'] == 0:
+        state, powerline_state, notifications, pg_comms_in_errors, bytesdropped_error = self.check_status()
+        if not state['running'] and state['current_address'] == 0:
             # If it is back in manual mode, make it ignore hardware triggers 
             self.pg.write_device_options(trigger_source='software')
             return True

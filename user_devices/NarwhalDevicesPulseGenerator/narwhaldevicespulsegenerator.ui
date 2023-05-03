@@ -38,10 +38,13 @@
      <item>
       <widget class="QLabel" name="label_7">
        <property name="text">
-        <string>Note: All manual control settings are overwritten when BLACS transiitions to buffered mode.</string>
+        <string>Note: All manual control settings are overwritten and disabled when BLACS transitions to buffered mode. Most recent manual changes will be executed when BLACS returns to manual mode.</string>
        </property>
        <property name="alignment">
         <set>Qt::AlignCenter</set>
+       </property>
+       <property name="wordWrap">
+        <bool>true</bool>
        </property>
       </widget>
      </item>
