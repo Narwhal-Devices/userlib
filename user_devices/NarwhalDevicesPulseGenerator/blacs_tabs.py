@@ -357,12 +357,12 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
     @define_state(MODE_MANUAL,True) 
     def pause(self, checked, widget=None):
         enabled = not checked
-        yield(self.queue_work(self._primary_worker,'run_enable_software', enabled))
+        yield(self.queue_work(self._primary_worker,'set_run_enable_software', enabled))
         self.status_monitor()
         
     @define_state(MODE_MANUAL,True)  
     def stop(self,widget=None):
-        yield(self.queue_work(self._primary_worker,'disable_after_current_run'))
+        yield(self.queue_work(self._primary_worker,'set_disable_after_current_run'))
         self.status_monitor()
         
     @define_state(MODE_MANUAL,True)  

@@ -25,21 +25,129 @@ import time
 
 class NarwhalDevicesPulseGenerator(PseudoclockDevice):
 
-    # pb_instructions = {'CONTINUE':   0,
-    #                    'STOP':       1, 
-    #                    'LOOP':       2, 
-    #                    'END_LOOP':   3,
-    #                    'BRANCH':     6,
-    #                    'LONG_DELAY': 7,
-    #                    'WAIT':       8}
-                       
+    ############### Attributes required by superclasses ################  
+    description = 'Narwhal Devices Pulse Generator'
+
+    clock_limit = 100E6 #hertz
+    '''The clock_limit specifies the minimum instruction duration. ie min_instruction_length=1/clock_limit'''
+
+    clock_resolution = 10E-9 #seconds
+    '''The clock_resolution specifies the increment that can be added to the min_instruction_length.
+    for some devices, min_instruction_length > clock_resolution. But the Narwhal Devices Pulse Generator
+    is super awesome, so min_instruction_length=clock_resolution.'''
+
+    trigger_edge_type = 'rising'
+    '''The edge of the input hardware trigger signal that the device responds to.'''
+
+    trigger_minimum_duration = 10E-9 #seconds
+    '''Minimum required duration of an input hardware trigger to guarantee that it will be registered'''
+    
+    minimum_recovery_time = 20E-9 #seconds
+    '''Minimum time between the rising edges of two input hardware trigger so that they will both be registered'''
+
+    trigger_delay = 40E-9 #seconds
+    '''The time between an input hardware trigger arriving at the Pulse Generator, and the voltage of the channel outputs
+    updating. This is able to be longer than the minimum_recovery_time because the FPGA pipelines some signals. ie, 
+     it can start doing the next thing before it has finished doing the current thing.'''
+
+    wait_delay = 0 #seconds
+    '''How long after the start of a WAIT instruction the device is actually capable of resuming'''
+
+    ############### Attributes required only by this class ################  
+    max_instructions = 8192
+    '''The maximum number of device instructions that the Narwhal Devices Pulse Generator can store. This is
+    not the same as the number of pseudoinstructions that labscript could generate, as some pseudoinstructions
+    may require more than one device instruction.'''
+
+
+    '''Required Properties:
+
+    These can be set as attributes of the class, since all instances of this class must have these properties
+    description
+    
+    DONE clock_limit.   is equal to 1/minimum pulse width. See line 822.
+                    VERDICT: REQUIRED. SET TO 100MHz. add to device_properties.
+
+    NOT NEEDED. minimum_clock_high_time. For Intermediate device is it : minimum_clock_high_time=1/self.clock_limit/2 (which if the clock_limit is 100MHz the minimum_clock_high_time=5ns.
+                                            But maybe this is a hack so that Internal intermediated devices CAN output at the full clock limit, because it is AS THOUGH it can 
+                                            respond to 5ns high sichnals (which would have a 10ns period.)
+                                For ClockLine it is retrieved from its parent device (which is a psudoclock).
+                                In Psudoclock, it is used to calculate the 
+                                think this is always derived from clock limit, so I don't need to set it directly. It may be derived in a different way for each different class,
+                            so you might have to check which one is applicable.
+                                VERDITCT: DONT SET DIRECTLY.
+
+
+    DONE clock_resolution    used to quantise the instruction timing. # quantise the times to the pseudoclock clock resolution
+                        times = (times/self.pseudoclock_device.clock_resolution).round()*self.pseudoclock_device.clock_resolution
+                        Not exactly sure how this differes from the inverse of clock_limit. Probably in the case where devices have a different
+                        minimum pulse width to their resolution. But it is a bit of a funny way to specify it. 
+                        VERDICT: REQUIRED. SET TO 10ns. add to device_properties. All pseudoclock devices need this set.
+
+    
+    DONE trigger_delay : # How long after a trigger the next instruction is actually output: line 1266.
+                    Does not actually get called from device_properties (it gets defined in PseudoclockDevice(TriggerableDevice)
+                    and then you just overwrite it), but add it anyway for the record. (Thechnicly only required when the
+                    psudoclock in the psudoclock_device is not the master pseudoclock)
+                    VERDICT: REQUIRED. Set to 40ns. 
+
+    DONE.trigger_minimum_duration: # How long a trigger line must remain high/low in order to be detected.
+                                Same as Trigger Delay. Does not actually get called from device_properties (it gets defined in PseudoclockDevice(TriggerableDevice)
+                                and then you just overwrite it), but add it anyway for the record.
+                                VERDICT: REQUIRED. Set to 10ns. 
+
+    DONE. minimum_recovery_time: Again, not strictly required since defaults are always specified, but good to make explicit.
+                            VERDICT: REQUIRED. set to 20ns.
+
+    DONE wait_delay: Not as sure what this is. but confident it is 0ns for me. Same as trgger_delay and trigger_minimu_duration.
+                VERDICT: REQUIRED. set to 0.
+
+
+    DONE. trigger_edge_type = 'rising' : Not technically required, since all base classes already define this,
+                        but I should put it in becase it is good to make it explicit. (does putting it in overwrite
+                        the properties in the base class: yes)
+
+    DONE. max_instructions: self explanatory, but NOT used by any base class, since they don't know how how you
+                        will turn pseudoclock instructions into device instructions.
+                        VERDICT: NOT REQUIRED, BUT ADD FOR USEFUL INFO.
+
+    
+    ###################################################
+    These are passes in as arguments, since depending on the setup, they may change, so should be stored in 
+    either connection_table_properties or  device_properties
+
+    trigger_device: Pass to init of PseudoClockDecice. Dont need to save in device properties
+                    VERDICT: REQUIRED (use Args description for prawnblaster). connection_table_properties
+    
+    trigger_connection: Pass to init of PseudoClockDecice. Dont need to save in device properties
+                    VERDICT: REQUIRED (use Args description for prawnblaster). connection_table_properties
+
+                    
+    trigger_source: pass in?? If master, needs software for start, but maybe hardware for restart.
+                    if secondary, only need hardware. So, pass in with default as 'either'. connection_table_properties
+                    
+    trigger_on_powerline: pass in. device_properties
+
+    powerline_trigger_delay: pass in. device_properties
+
+    trigger_out_length: pass in. device_properties
+
+    serial_number: connection_table_properties
+
+    firmware: See if I can pass this back up the ladder from the BLACS worker. might be a little tricky? device_properties
+             
+'''
+
+
+
+    # The rate (in Hz) at which the output can update                  
+    clock_frequency = 100e6 # This needs to be set to 100MHz for labscript to allow instructions 10ns apart, but think it is fucking up the self.min_delay below
+
     trigger_delay = 30e-9 
-    wait_delay = 30e-9 # Don't know what this is
     trigger_edge_type = 'rising'
 
     description = 'Narwhal Devices Pulse Generator, using a PulsebalsterUSB template but using Labscript base calsses only. Not subclassing from other pulsbalaster types.'        
     # clock_limit = 50e6 # Not fully sure what this is. I think it might be the maximum OUTPUT clock, which consists of TWO instructions (high, low)
-    clock_limit = 100e6 # This needs to be set to 100MHz for labscript to allow instructions 10ns apart, but think it is fucking up the self.min_delay below
     clock_resolution = 10e-9
     n_channels = 24
     core_clock_freq = 100.0
@@ -50,13 +158,48 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
     @set_passed_properties(
         property_names = {'connection_table_properties': ['serial_number'],
                           'device_properties': ['pulse_width', 
-                                                'max_instructions']}
+                                                'max_instructions',
+                                                ]}
         )
-    def __init__(self, name, trigger_device=None, trigger_connection=None, serial_number=0, firmware = '',
-                 pulse_width='symmetric', max_instructions=4000, **kwargs):
+    
+    # @set_passed_properties(
+    #     property_names={
+    #         "connection_table_properties": [
+    #             'serial_number',
+    #             "in_pins",
+    #             "out_pins",
+    #             "num_pseudoclocks",
+    #         ],
+    #         "device_properties": [
+    #             "clock_frequency",
+    #             "external_clock_pin",
+    #             "clock_limit",
+    #             "clock_resolution",
+    #             "input_response_time",
+    #             "trigger_delay",
+    #             "trigger_minimum_duration",
+    #             "wait_delay",
+    #             "max_instructions",
+    #         ],
+    #     }
+    # )
+
+
+    def __init__(
+        self, 
+        name, 
+        trigger_device=None, 
+        trigger_connection=None, 
+        serial_number=0, 
+        firmware = '',
+        pulse_width='symmetric', 
+        max_instructions=4000, 
+        **kwargs):
+
+        # Instantiate the base class
         PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection, **kwargs)
+
         self.BLACS_connection = serial_number
-        self.firmware_version = firmware
         
 
         # This is the minimum duration of a NDPG instruction. We save this now

@@ -23,7 +23,16 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
 
         # I need to see how and where the settings are supposed to be set/passed in. Most are probably set in the connection table and stored in the self.settings['connection_table'].find_by_name(self.device_name) or something 
         self.pg.write_device_options(run_mode='single', trigger_source='software', trigger_out_length=1, trigger_out_delay=0, notify_on_main_trig_out=False, notify_when_run_finished=True, software_run_enable=True)
-
+        # Need to write all settings, as they may have been changed in manual mode. Most are specified by sensible options to run in buffered mode
+        #  
+        # trigger_on_powerline
+        # powerline_trigger_delay
+        # trigger_out_length
+        # trigger_out_delay
+        # Maybe trigger_source
+        # Dont need to set final_ram_address 
+        # self.pg.write_powerline_trigger_options(trigger_on_powerline=None, powerline_trigger_delay=None)
+        # self.pg.write_device_options(, run_mode='single', trigger_source='either', trigger_out_length=None, trigger_out_delay=None, notify_on_main_trig_out=True, notify_when_run_finished=True, software_run_enable=True)
 
     def start_run(self):
         # method for starting the shot via a software trigger to the device.
@@ -138,7 +147,15 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
             final_values[f'channel {channel}'] = channel_state
 
         self.pg.write_instructions(instructions)
-        self.pg.write_device_options(final_ram_address=final_instr['address'], trigger_source='either', software_run_enable=True)
+        # Need to write all settings, as they may have been changed in manual mode. Most are specified by sensible options to run in buffered mode
+        #  
+        # trigger_on_powerline
+        # powerline_trigger_delay
+        # trigger_out_length
+        # trigger_out_delay
+        # Maybe trigger_source
+        self.pg.write_powerline_trigger_options(trigger_on_powerline=None, powerline_trigger_delay=None)
+        self.pg.write_device_options(final_ram_address=final_instr['address'], run_mode='single', trigger_source='either', trigger_out_length=None, trigger_out_delay=None, notify_on_main_trig_out=True, notify_when_run_finished=True, software_run_enable=True)
         return final_values
 
 
@@ -187,13 +204,13 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         return remote_values
 
     ########################### From here down, it is all things I wrote
-    def disable_after_current_run(self):
+    def set_disable_after_current_run(self):
         #I need to check the FPGA code to see if this does anything when running is not true, and when run_mode is single.
-        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.disable_after_current_run')
-        self.pg.write_action(reset_run=True)
+        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.set_disable_after_current_run')
+        self.pg.write_action(disable_after_current_run=True)
 
-    def run_enable_software(self, enabled):
-        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.run_enable_software')
+    def set_run_enable_software(self, enabled):
+        print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.set_run_enable_software')
         self.pg.write_device_options(software_run_enable=enabled)
 
     def set_runmode(self, runmode):

@@ -57,7 +57,6 @@ class PulseGenerator():
         valid_ports = []
         comports = list(serial.tools.list_ports.comports())
         for comport in comports:
-            print(comport)
             if 'vid' in vars(comport) and 'pid' in vars(comport):
                 if vars(comport)['vid'] == 1027 and vars(comport)['pid'] == 24592:
                     valid_ports.append(comport)
