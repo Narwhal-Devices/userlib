@@ -21,6 +21,16 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         self.pg = ndpulsegen.PulseGenerator()
         self.pg.connect(self.serial_number)
 
+        self.pg.write_echo(b'N')
+        self.device_info = self.pg.msgin_queues['echo'].get()
+        self.device_info['comport'] = self.pg.ser.port
+
+        # print(self.trigger_type)
+        print(self.trigger_device)
+        print(self.connection_table_properties)
+
+        # print(self.device_properties["trigger_out_length"])
+        # print(self.max_instructions)
         # I need to see how and where the settings are supposed to be set/passed in. Most are probably set in the connection table and stored in the self.settings['connection_table'].find_by_name(self.device_name) or something 
         self.pg.write_device_options(run_mode='single', trigger_source='software', trigger_out_length=1, trigger_out_delay=0, notify_on_main_trig_out=False, notify_when_run_finished=True, software_run_enable=True)
         # Need to write all settings, as they may have been changed in manual mode. Most are specified by sensible options to run in buffered mode
@@ -40,7 +50,10 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # associated BLACS GUI methods (which can be anything the developer wishes).
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.start_run')
         self.pg.write_action(trigger_now=True)
-        
+
+    def get_device_info(self):
+        # This is called only once by blacs_tabs.py so it can display the hardware/firmware versions etc
+        return self.device_info
 
     def check_status(self):
         # method for checking whether the shot has completed.
@@ -105,7 +118,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         self.pg.write_static_state([val for val in front_panel_values.values()])
         return {}
 
-    def transition_to_buffered(self , device_name, h5file, initial_values, fresh):
+    def transition_to_buffered(self, device_name, h5file, initial_values, fresh):
         # Access the HDF5 file specified and program the table of
         # hardware instructions for this device .
         # Place the device in a state ready to receive a hardware
@@ -124,13 +137,24 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # after the shot completes .
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_buffered')
 
+
+        '''So here is where I should add the firmware number, and I must add it to the
+        device_folder attributes.
+        I think I am just giving up on chaning the connection_table_properties for the device.
+        '''
+
         with h5py.File(h5file, 'r') as hdf5_file:
             # device_properties = labscript_utils.properties.get(hdf5_file, device_name, 'device_properties')
             # self.is_master_pseudoclock = device_properties['is_master_pseudoclock']
             # self.stop_time = device_properties.get('stop_time', None) # stop_time may be absent if we are not the master pseudoclock
-        
-            group = hdf5_file['devices/%s'%device_name]
+
+            # Note that this get() method needs the actual open hdf5_file object, not the directory of the h5file, which is what is passed into the transition_to_buffered method
+            self.device_properties = labscript_utils.properties.get(hdf5_file, device_name, "device_properties")
+            print(self.device_properties)
+
+            group = hdf5_file[f'devices/{device_name}']
             pulse_program = group['PULSE_PROGRAM'][:]
+
 
             instructions = []
             for vals in pulse_program:

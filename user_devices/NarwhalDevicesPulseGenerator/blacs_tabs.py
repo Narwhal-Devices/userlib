@@ -79,17 +79,30 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         """Initialises the  Workers.
         This method is called automatically by BLACS.
         """
-        self.serial_number = int(self.settings['connection_table'].find_by_name(self.device_name).BLACS_connection)
 
+        # Doesn't work. the "self" with connection_table_propweties is the Device object. This is the DeviceTab object.
+        # self.set_property('mynewpropname1', 'I set this frim blacs_tab.py', 'connection_table_properties')
+
+
+        # Get all argument passed in from the connection table,
+        self.serial_number = int(self.settings['connection_table'].find_by_name(self.device_name).BLACS_connection)
+        
+        # and all get class attributes set in the labscript.py file???? 
+        # I don't have access to them, and realistically, there is no reason I should need them
+
+        # self.myprops = self.settings["connection_table"].find_by_name(self.device_name).properties
+        # self.trigger_type = self.settings["connection_table"].find_by_name(self.device_name).properties
         # com_port = str(
         #     self.settings["connection_table"]
         #     .find_by_name(self.device_name)
         #     .BLACS_connection
         # )
 
+        # These all become accessable attributes in the worker simply with self.name_of_my_kwarg
         worker_initialisation_kwargs = {
             'serial_number':self.serial_number,
-            'num_DO': self.num_DO
+            'num_DO': self.num_DO,
+            'connection_table_properties':self.settings["connection_table"].find_by_name(self.device_name).properties
         }
         from .blacs_workers import NarwhalDevicesPulseGeneratorWorker
         self.create_worker(
@@ -182,6 +195,9 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # Status monitor timout
         self.statemachine_timeout_add(1000, self.status_monitor)
 
+        #Get the device hardware version, firmware version and serial numbers
+        self.get_device_info()
+
     def get_child_from_connection_table(self, parent_device_name, port):
         # Don't know what this does, but I think it is ok to leave it.
         # This is a direct output, let's search for it on the internal intermediate device called NarwhalDevicesPulseGeneratorDirectOutputs
@@ -223,12 +239,20 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.statemachine_timeout_add(100,self.status_monitor,notify_queue)
 
     #These call methods of the blacs_worker, which send signals to the device. Need to decide what to have. start_run is compulsury, the others I can choose what I like.
-    
     ###################### Methods dealing with BLACS_tab GUI ###################################
+    @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
+    def get_device_info(self):
+        device_info = yield(self.queue_work(self._primary_worker,'get_device_info'))
+        self.ui.label_serialnumber.setText(f"{device_info['serial_number']}")
+        self.ui.label_firmwareversion.setText(f"{device_info['firmware_version']}")
+        self.ui.label_hardwareversion.setText(f"{device_info['hardware_version']}")
+        self.ui.label_comport.setText(f"{device_info['comport']}")
+        
+
     @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
     def status_monitor(self,notify_queue=None):
         """Gets the status of the Pulse Generator from the worker.
-        This is called by a timer in three ways:
+        This is called by in three ways:
             By a timer set up when GUI is initialised, with a fairly infrequent call.
             By a timer set up by the start_run method above, quite rapidly.
             By the methods that handle the interactive GUI widgets, to keep them in sync.
@@ -245,7 +269,10 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         state, powerline_state, notifications, pg_comms_in_errors, bytesdropped_error = yield(self.queue_work(self._primary_worker,'check_status'))
 
         # Synchronisation
-        powerline_freq = 1/(powerline_state['powerline_period']*10E-9)*powerline_state['powerline_locked']
+        if powerline_state['powerline_locked']:
+            powerline_freq = 1/(powerline_state['powerline_period']*10E-9)
+        else:
+            powerline_freq = 0.0
         self.ui.label_powerlinefrequency.setText(f'{powerline_freq:.3f} Hz')
         self.ui.label_referenceclock.setText(f"{state['clock_source']}")
 
@@ -273,10 +300,10 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
 
         
         # Why block signals? Because other parts of labscript can update the Pulse Generator
-        # interneal settings, without going through the GUI. When the status_monitor then updates
+        # internal settings, without going through the GUI. When the status_monitor then updates
         # the GUI widgets to reflect the internal state of the Pulse Generator, this change would
         # ordinarily trigger one of the widget_changed methods that I registered. This would then
-        # change update the setting again, which is unnecessary and therefor wasetful.
+        # update the setting again, which is unnecessary and therefor wasetful.
 
         # Run mode
         self.ui.combo_runmode.blockSignals(True)  

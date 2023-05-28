@@ -53,154 +53,104 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
     wait_delay = 0 #seconds
     '''How long after the start of a WAIT instruction the device is actually capable of resuming'''
 
+    allowed_children = [Pseudoclock]
+    '''This device can only have Pseudoclock children. Clockline(s), DigitalOut(s), and Trigger(s) are connected to 
+    internally created children.'''
+
     ############### Attributes required only by this class ################  
     max_instructions = 8192
     '''The maximum number of device instructions that the Narwhal Devices Pulse Generator can store. This is
     not the same as the number of pseudoinstructions that labscript could generate, as some pseudoinstructions
     may require more than one device instruction.'''
 
-
-    '''Required Properties:
-
-    These can be set as attributes of the class, since all instances of this class must have these properties
-    description
-    
-    DONE clock_limit.   is equal to 1/minimum pulse width. See line 822.
-                    VERDICT: REQUIRED. SET TO 100MHz. add to device_properties.
-
-    NOT NEEDED. minimum_clock_high_time. For Intermediate device is it : minimum_clock_high_time=1/self.clock_limit/2 (which if the clock_limit is 100MHz the minimum_clock_high_time=5ns.
-                                            But maybe this is a hack so that Internal intermediated devices CAN output at the full clock limit, because it is AS THOUGH it can 
-                                            respond to 5ns high sichnals (which would have a 10ns period.)
-                                For ClockLine it is retrieved from its parent device (which is a psudoclock).
-                                In Psudoclock, it is used to calculate the 
-                                think this is always derived from clock limit, so I don't need to set it directly. It may be derived in a different way for each different class,
-                            so you might have to check which one is applicable.
-                                VERDITCT: DONT SET DIRECTLY.
-
-
-    DONE clock_resolution    used to quantise the instruction timing. # quantise the times to the pseudoclock clock resolution
-                        times = (times/self.pseudoclock_device.clock_resolution).round()*self.pseudoclock_device.clock_resolution
-                        Not exactly sure how this differes from the inverse of clock_limit. Probably in the case where devices have a different
-                        minimum pulse width to their resolution. But it is a bit of a funny way to specify it. 
-                        VERDICT: REQUIRED. SET TO 10ns. add to device_properties. All pseudoclock devices need this set.
-
-    
-    DONE trigger_delay : # How long after a trigger the next instruction is actually output: line 1266.
-                    Does not actually get called from device_properties (it gets defined in PseudoclockDevice(TriggerableDevice)
-                    and then you just overwrite it), but add it anyway for the record. (Thechnicly only required when the
-                    psudoclock in the psudoclock_device is not the master pseudoclock)
-                    VERDICT: REQUIRED. Set to 40ns. 
-
-    DONE.trigger_minimum_duration: # How long a trigger line must remain high/low in order to be detected.
-                                Same as Trigger Delay. Does not actually get called from device_properties (it gets defined in PseudoclockDevice(TriggerableDevice)
-                                and then you just overwrite it), but add it anyway for the record.
-                                VERDICT: REQUIRED. Set to 10ns. 
-
-    DONE. minimum_recovery_time: Again, not strictly required since defaults are always specified, but good to make explicit.
-                            VERDICT: REQUIRED. set to 20ns.
-
-    DONE wait_delay: Not as sure what this is. but confident it is 0ns for me. Same as trgger_delay and trigger_minimu_duration.
-                VERDICT: REQUIRED. set to 0.
-
-
-    DONE. trigger_edge_type = 'rising' : Not technically required, since all base classes already define this,
-                        but I should put it in becase it is good to make it explicit. (does putting it in overwrite
-                        the properties in the base class: yes)
-
-    DONE. max_instructions: self explanatory, but NOT used by any base class, since they don't know how how you
-                        will turn pseudoclock instructions into device instructions.
-                        VERDICT: NOT REQUIRED, BUT ADD FOR USEFUL INFO.
-
-    
-    ###################################################
-    These are passes in as arguments, since depending on the setup, they may change, so should be stored in 
-    either connection_table_properties or  device_properties
-
-    trigger_device: Pass to init of PseudoClockDecice. Dont need to save in device properties
-                    VERDICT: REQUIRED (use Args description for prawnblaster). connection_table_properties
-    
-    trigger_connection: Pass to init of PseudoClockDecice. Dont need to save in device properties
-                    VERDICT: REQUIRED (use Args description for prawnblaster). connection_table_properties
-
-                    
-    trigger_source: pass in?? If master, needs software for start, but maybe hardware for restart.
-                    if secondary, only need hardware. So, pass in with default as 'either'. connection_table_properties
-                    
-    trigger_on_powerline: pass in. device_properties
-
-    powerline_trigger_delay: pass in. device_properties
-
-    trigger_out_length: pass in. device_properties
-
-    serial_number: connection_table_properties
-
-    firmware: See if I can pass this back up the ladder from the BLACS worker. might be a little tricky? device_properties
-             
-'''
-
-
-
-    # The rate (in Hz) at which the output can update                  
-    clock_frequency = 100e6 # This needs to be set to 100MHz for labscript to allow instructions 10ns apart, but think it is fucking up the self.min_delay below
-
-    trigger_delay = 30e-9 
-    trigger_edge_type = 'rising'
-
-    description = 'Narwhal Devices Pulse Generator, using a PulsebalsterUSB template but using Labscript base calsses only. Not subclassing from other pulsbalaster types.'        
-    # clock_limit = 50e6 # Not fully sure what this is. I think it might be the maximum OUTPUT clock, which consists of TWO instructions (high, low)
-    clock_resolution = 10e-9
     n_channels = 24
-    core_clock_freq = 100.0
-    
-    # This device can only have Pseudoclock children (digital outs and DDS outputs should be connected to a child device)
-    allowed_children = [Pseudoclock]
+    '''The total number of output channels.'''
+
+    '''May or may not need to rethink which properties go in "connection_table_properties", and which
+    do in "device_properties". "device_properties" can only be accessed from the hdf file so are sort of a "per
+    shot" type setting. They can be accessed in the "transition_to_buffered" method of the worker, 
+    becase a referece to the hdf file is passed in. this is maybe ok. When I initialize the worker, 
+    I can set it with sensible defaults. The settings are then changed to the required "device_properties"
+    only when a shot is about to be run. Which is fine.'''
     
     @set_passed_properties(
-        property_names = {'connection_table_properties': ['serial_number'],
-                          'device_properties': ['pulse_width', 
-                                                'max_instructions',
-                                                ]}
-        )
-    
-    # @set_passed_properties(
-    #     property_names={
-    #         "connection_table_properties": [
-    #             'serial_number',
-    #             "in_pins",
-    #             "out_pins",
-    #             "num_pseudoclocks",
-    #         ],
-    #         "device_properties": [
-    #             "clock_frequency",
-    #             "external_clock_pin",
-    #             "clock_limit",
-    #             "clock_resolution",
-    #             "input_response_time",
-    #             "trigger_delay",
-    #             "trigger_minimum_duration",
-    #             "wait_delay",
-    #             "max_instructions",
-    #         ],
-    #     }
-    # )
-
-
+        property_names={
+            "connection_table_properties": [
+                "serial_number",
+                "trigger_device",       #It is possible this MUST go in "device properties"
+                "trigger_connection"   #It is possible this MUST go in "device properties"
+            ],
+            "device_properties": [
+                "trigger_type",
+                "trigger_out_length",
+                "trigger_out_delay",
+                "trigger_on_powerline",
+                "powerline_trigger_delay",
+                "max_instructions"
+                #"firmware", Try to find a way to send the firmware version back up the chain from the blacs worker, Or maybe save it directly from the blacs tab. See if I have access from there. I might.
+            ],
+        }
+    )
     def __init__(
-        self, 
-        name, 
-        trigger_device=None, 
-        trigger_connection=None, 
-        serial_number=0, 
-        firmware = '',
-        pulse_width='symmetric', 
-        max_instructions=4000, 
-        **kwargs):
+        self,
+        name,
+        serial_number=None,
+        trigger_device=None,
+        trigger_connection=None,
+        trigger_type='either',
+        trigger_out_length=10E-9,
+        trigger_out_delay=0,
+        trigger_on_powerline=False,
+        powerline_trigger_delay=0,
+    ):
+        """Narwhal Devices Pulse Generator.
+
+        This labscript device creates a single Pseudoclock, and can be used to produce
+        Clockline(s), DigitalOut(s), and Trigger(s). 
+
+        Args:
+            name (str): python variable name to assign to the Narwhal Devices Pulse 
+                Generator (NDPG). Used by labscript base classes to determine instructions.
+            serial_number (int, optional): The serial number of the NDPG that you want
+                to connect to. Defaults to 'None' where connection will be made to the 
+                first available NDPG.
+            trigger_device (:class:`~labscript.IntermediateDevice`, optional): Device
+                that will send the hardware start trigger when using the NDPG as a secondary 
+                Pseudoclock. Used by labscript base classes to determine instructions.
+            trigger_connection (str, optional): The name of the output of the `trigger_device`
+                that is connected to the NDPG hardware trigger input. Used by labscript base 
+                classes to determine instructions.
+            trigger_type (str, optional): {'software', 'hardware', 'either', 'single_hardware'}
+                Determins what kind of trigger inputs will start a run. 
+                See also: ndpulsegen.transcode.encode_device_options [trigger_source]
+            trigger_out_length (float, optional): ∈ [0, 2.55E-6] seconds. The duration of the pulses 
+                output from the Trigger Out physical port on the NDPG.
+                See also: ndpulsegen.transcode.encode_device_options
+            trigger_out_delay (float, optional): ∈ [0, 720575940.3792794] seconds. The delay 
+                between the update of the channels when a run has started, and the pulse 
+                that is output on Trigger Out physical port on the NDPG.
+                See also: ndpulsegen.transcode.encode_device_options
+            trigger_on_powerline (bool, optional): If True, all software and hardware triggers 
+                will not immediately start or restart a run. Instead, any trigger recieved 
+                will put the run in state where it immediately restarts on the next 
+                powerline_trigger.
+                See also: ndpulsegen.transcode.encode_powerline_trigger_options
+            powerline_trigger_delay (float, optional): ∈ [0, 41.94303E-3] seconds. The delay 
+                between the mains AC line crossing 0 volts in a positive direction, and the 
+                emission of a powerline_trigger.
+                See also: ndpulsegen.transcode.encode_powerline_trigger_options
+        """
+
 
         # Instantiate the base class
-        PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection, **kwargs)
+        PseudoclockDevice.__init__(self, name, trigger_device, trigger_connection)
 
+        # Set the BLACS connections
         self.BLACS_connection = serial_number
-        
+
+        # This works
+        self.set_property('mynewpropname', 'I set this frim labscript_devices.py', 'connection_table_properties')
+
 
         # This is the minimum duration of a NDPG instruction. We save this now
         # because clock_limit will be modified to reflect child device limitations and
@@ -208,6 +158,8 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         # that.
         self.min_delay = 0.5 / self.clock_limit
 
+        #Things needed to make it run, but I may well delete again
+        pulse_width = 'minimum'
 
 
         if pulse_width == 'minimum':
@@ -233,7 +185,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
             if pulse_width > minimum_low_time:
                 self.clock_limit = 1/(pulse_width + minimum_low_time)
         self.pulse_width = pulse_width
-        self.max_instructions = max_instructions
+        
 
         # Create the internal pseudoclock
         self._pseudoclock = Pseudoclock('%s_pseudoclock'%name, self, 'clock') # possibly a better connection name than 'clock'?
@@ -802,3 +754,80 @@ class NarwhalDevicesPulseGeneratorDirectOutputs(IntermediateDevice):
 
 
 
+    '''Required Properties:
+
+    These can be set as attributes of the class, since all instances of this class must have these properties
+    description
+    
+    DONE clock_limit.   is equal to 1/minimum pulse width. See line 822.
+                    VERDICT: REQUIRED. SET TO 100MHz. add to device_properties.
+
+    NOT NEEDED. minimum_clock_high_time. For Intermediate device is it : minimum_clock_high_time=1/self.clock_limit/2 (which if the clock_limit is 100MHz the minimum_clock_high_time=5ns.
+                                            But maybe this is a hack so that Internal intermediated devices CAN output at the full clock limit, because it is AS THOUGH it can 
+                                            respond to 5ns high sichnals (which would have a 10ns period.)
+                                For ClockLine it is retrieved from its parent device (which is a psudoclock).
+                                In Psudoclock, it is used to calculate the 
+                                think this is always derived from clock limit, so I don't need to set it directly. It may be derived in a different way for each different class,
+                            so you might have to check which one is applicable.
+                                VERDITCT: DONT SET DIRECTLY.
+
+
+    DONE clock_resolution    used to quantise the instruction timing. # quantise the times to the pseudoclock clock resolution
+                        times = (times/self.pseudoclock_device.clock_resolution).round()*self.pseudoclock_device.clock_resolution
+                        Not exactly sure how this differes from the inverse of clock_limit. Probably in the case where devices have a different
+                        minimum pulse width to their resolution. But it is a bit of a funny way to specify it. 
+                        VERDICT: REQUIRED. SET TO 10ns. add to device_properties. All pseudoclock devices need this set.
+
+    
+    DONE trigger_delay : # How long after a trigger the next instruction is actually output: line 1266.
+                    Does not actually get called from device_properties (it gets defined in PseudoclockDevice(TriggerableDevice)
+                    and then you just overwrite it), but add it anyway for the record. (Thechnicly only required when the
+                    psudoclock in the psudoclock_device is not the master pseudoclock)
+                    VERDICT: REQUIRED. Set to 40ns. 
+
+    DONE.trigger_minimum_duration: # How long a trigger line must remain high/low in order to be detected.
+                                Same as Trigger Delay. Does not actually get called from device_properties (it gets defined in PseudoclockDevice(TriggerableDevice)
+                                and then you just overwrite it), but add it anyway for the record.
+                                VERDICT: REQUIRED. Set to 10ns. 
+
+    DONE. minimum_recovery_time: Again, not strictly required since defaults are always specified, but good to make explicit.
+                            VERDICT: REQUIRED. set to 20ns.
+
+    DONE wait_delay: Not as sure what this is. but confident it is 0ns for me. Same as trgger_delay and trigger_minimu_duration.
+                VERDICT: REQUIRED. set to 0.
+
+
+    DONE. trigger_edge_type = 'rising' : Not technically required, since all base classes already define this,
+                        but I should put it in becase it is good to make it explicit. (does putting it in overwrite
+                        the properties in the base class: yes)
+
+    DONE. max_instructions: self explanatory, but NOT used by any base class, since they don't know how how you
+                        will turn pseudoclock instructions into device instructions.
+                        VERDICT: NOT REQUIRED, BUT ADD FOR USEFUL INFO.
+
+    
+    ###################################################
+    These are passes in as arguments, since depending on the setup, they may change, so should be stored in 
+    either connection_table_properties or  device_properties
+
+    trigger_device: Pass to init of PseudoClockDecice. Dont need to save in device properties
+                    VERDICT: REQUIRED (use Args description for prawnblaster). connection_table_properties
+    
+    trigger_connection: Pass to init of PseudoClockDecice. Dont need to save in device properties
+                    VERDICT: REQUIRED (use Args description for prawnblaster). connection_table_properties
+
+                    
+    trigger_source: pass in?? If master, needs software for start, but maybe hardware for restart.
+                    if secondary, only need hardware. So, pass in with default as 'either'. connection_table_properties
+                    
+    trigger_on_powerline: pass in. device_properties
+
+    powerline_trigger_delay: pass in. device_properties
+
+    trigger_out_length: pass in. device_properties
+
+    serial_number: connection_table_properties
+
+    firmware: See if I can pass this back up the ladder from the BLACS worker. might be a little tricky? device_properties
+             
+'''
