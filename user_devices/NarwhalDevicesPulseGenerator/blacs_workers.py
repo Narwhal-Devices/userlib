@@ -138,10 +138,16 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_buffered')
 
 
-        '''So here is where I should add the firmware number, and I must add it to the
-        device_folder attributes.
-        I think I am just giving up on chaning the connection_table_properties for the device.
+        '''I cant add the firmware number, to the device_folder attributes. The file is read only here.
+        I think I am just giving up on chaning the connection_table_properties for the device. or the device attributes.
         '''
+
+        print(initial_values)
+        initial_channel_state = np.zeros(24, dtype=np.int64)
+        for channel_label, channel_state in initial_values.items():
+            channel = int(channel_label.split()[1])
+            initial_channel_state[channel] = int(channel_state)
+
 
         with h5py.File(h5file, 'r') as hdf5_file:
             # device_properties = labscript_utils.properties.get(hdf5_file, device_name, 'device_properties')
@@ -151,19 +157,29 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
             # Note that this get() method needs the actual open hdf5_file object, not the directory of the h5file, which is what is passed into the transition_to_buffered method
             self.device_properties = labscript_utils.properties.get(hdf5_file, device_name, "device_properties")
             print(self.device_properties)
-
             group = hdf5_file[f'devices/{device_name}']
             pulse_program = group['PULSE_PROGRAM'][:]
 
-
+            # Not all channels must be assigned in the labscript file. Any that aren't, keep them at the value on the GUI
+            instruction_0_channel_state = pulse_program[0]['channel_state']
+            unspecified_channels_index = instruction_0_channel_state == -1
+            unspecified_channels_state = initial_channel_state[unspecified_channels_index]
+            
             instructions = []
-            for vals in pulse_program:
-                instruction = ndpulsegen.encode_instruction(address=vals['address'], duration=vals['duration'], 
-                                                            state=vals['channel_state'], goto_address=vals['goto_address'], 
-                                                            goto_counter=vals['goto_counter'], stop_and_wait=vals['stop_and_wait'], 
-                                                            hardware_trig_out=vals['hardware_trig_out'], notify_computer=vals['notify_computer'], 
-                                                            powerline_sync=vals['powerline_sync'])
-                instructions.append(instruction)
+            for instruction in pulse_program:
+                # print(instruction)
+                # Not all channels must be assigned in the labscript file. Any that aren't, keep them at the value on the GUI
+                channel_state = instruction['channel_state']
+                channel_state[unspecified_channels_index] = unspecified_channels_state
+                print(instruction)
+                print()
+                encoded_instruction = ndpulsegen.encode_instruction(address=instruction['address'], duration=instruction['duration'], 
+                                                            state=channel_state, goto_address=instruction['goto_address'], 
+                                                            goto_counter=instruction['goto_counter'], stop_and_wait=instruction['stop_and_wait'], 
+                                                            hardware_trig_out=instruction['hardware_trig_out'], notify_computer=instruction['notify_computer'], 
+                                                            powerline_sync=instruction['powerline_sync'])
+                instructions.append(encoded_instruction)
+                
             final_instr = pulse_program[-1]
 
         final_values = {}
