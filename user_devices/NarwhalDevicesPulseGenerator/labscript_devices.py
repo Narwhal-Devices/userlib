@@ -188,6 +188,8 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         #         self.clock_limit = 1/(pulse_width + minimum_low_time)
         # self.pulse_width = pulse_width
         
+        #For now, just use symmetric pulses
+        self.pulse_width = 'symmetric'
 
         # Create the internal pseudoclock
         self._pseudoclock = Pseudoclock('%s_pseudoclock'%name, self, 'clock') # possibly a better connection name than 'clock'?
@@ -317,42 +319,99 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         #     print('obj.%s = %r'%(attr, getattr(self._direct_output_clock_line, attr)))
 
         channel_state = np.ones(24, dtype=np.int64)*-1 #-1 indicates that no value has been specified in the labscript experiment, so keep whatever value is set in the blacs GUI.
-        raw_output_idx = 0
+        # raw_output_idx = 0
+        raw_output_idx = -1
         address = 0
         ndpg_inst = []
         for k, instruction in enumerate(self.pseudoclock.clock):
-            print('############################################################################################################')
-            print(instruction)
-            print()
-            # for clock_line in instruction['enabled_clocks']:
-            #     print(clock_line)
-            #     print()
-            #     print(clock_line.__dict__)
-            #     print()
+            # print('############################################################################################################')
+            # print(instruction)
+            # print()
 
-            duration = int(np.round((instruction['step']/self.clock_resolution)))
+            # This flag indicates whether we need a full clock tick, or are just updating an internal output
+            only_internal = True
+            for clock_line in instruction['enabled_clocks']:
+                if clock_line == self._direct_output_clock_line: 
+                    # advance i (the index keeping track of internal clockline output)
+                    raw_output_idx += 1
+                else:
+                    # This is the upwards tick of a clock line. 
+                    channel = int(clock_line.connection.split()[1]) #The channel that the clockline is associated with
+                    channel_state[channel] = 1 #upwards tick means it must be 1.
+                    # print(f'raw_output_idx={raw_output_idx}, clock_line.connection={clock_line.connection}')
+
+                    # We are also using other clocklines to clock external devices
+                    only_internal = False
+
+            # Set the output state for each channel specified
             for output in dig_outputs:
                 channel = int(output.connection.split()[1])
                 channel_state[channel] = output.raw_output[raw_output_idx]
 
-                # print(output)
-                # print()
-                # print(output.__dict__)
-                # print()
 
-            ndpg_inst.append({'address':address,
-                            'duration':duration,
-                            'channel_state':channel_state.copy(),
-                            'goto_address':0,
-                            'goto_counter':0,
-                            'stop_and_wait':False,
-                            'hardware_trig_out':False,
-                            'notify_computer':False,
-                            'powerline_sync':False})
+            if only_internal:
+                print('only internal address:', address)
+                # We only need to update a direct output, so no need to tick the clocks.
+                duration = int(np.round((instruction['step']/self.clock_resolution)))
+                ndpg_inst.append({'address':address,
+                                'duration':duration,
+                                'channel_state':channel_state.copy(),
+                                'goto_address':0,
+                                'goto_counter':0,
+                                'stop_and_wait':False,
+                                'hardware_trig_out':False,
+                                'notify_computer':False,
+                                'powerline_sync':False})
+                # raw_output_idx += 1
+                address +=1   
+            else:
+                print('external:', address)
+                # We are also using other clocklines to clock external devices
+                if self.pulse_width == 'symmetric':
+                    high_time = instruction['step']/2
+                else:
+                    high_time = self.pulse_width
+                low_time = instruction['step'] - high_time
 
-            print(address, duration, channel_state)
-            raw_output_idx += 1
-            address +=1
+                # create the rising edge instruction
+                duration = int(np.round((high_time/self.clock_resolution)))
+                ndpg_inst.append({'address':address,
+                                'duration':duration,
+                                'channel_state':channel_state.copy(),
+                                'goto_address':0,
+                                'goto_counter':0,
+                                'stop_and_wait':False,
+                                'hardware_trig_out':False,
+                                'notify_computer':False,
+                                'powerline_sync':False})
+                loop_start_address = address
+                address += 1
+
+                # For all clocklines that this seudo-psudoclock instruction relates to, get
+                #its channel, and set it to 0, since this is were it transitions to low.
+                for clock_line in instruction['enabled_clocks']:
+                    if clock_line != self._direct_output_clock_line: #ignore the direct outputs, you have already set those states
+                        channel = int(clock_line.connection.split()[1]) #The channel that the clockline is associated with
+                        channel_state[channel] = 0
+                
+                # goto_counter on NDPG operates slightly differently to instruction['reps']
+                if instruction['reps'] == 0:
+                    goto_counter = 0
+                else:
+                    goto_counter = instruction['reps'] - 1
+                duration = int(np.round((low_time/self.clock_resolution)))
+                ndpg_inst.append({'address':address,
+                                'duration':duration,
+                                'channel_state':channel_state.copy(),
+                                'goto_address':loop_start_address,
+                                'goto_counter':goto_counter,
+                                'stop_and_wait':False,
+                                'hardware_trig_out':False,
+                                'notify_computer':False,
+                                'powerline_sync':False})
+                address += 1
+
+
         # index to keep track of where in output.raw_output the
         # pulseblaster channels are coming from
         # starts at -1 because the internal flag should always tick on the first instruction and be 
@@ -426,6 +485,10 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         #         ndpg_inst.append({'address':address, 'channels': channels.copy(), 'duration':low_time, 'goto_address':goto_address, 'goto_counter':instruction['reps']-1,
         #                         'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
         #         address += 1
+        for inst in ndpg_inst:
+            cpy = inst.copy()
+            cpy['channel_state'] = inst['channel_state'][0:5]
+            print(cpy)
         return ndpg_inst
 
 
