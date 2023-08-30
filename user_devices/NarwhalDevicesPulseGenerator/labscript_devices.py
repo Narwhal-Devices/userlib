@@ -293,8 +293,8 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
   
     def generate_code(self, hdf5_file):
         # Generate the hardware instructions
-        PseudoclockDevice.generate_code(self, hdf5_file)
         self.init_device_group(hdf5_file)
+        PseudoclockDevice.generate_code(self, hdf5_file)
 
         ndpg_inst = self.pseudo_inst_to_ndpg_inst()
         self.write_ndpg_inst_to_h5(ndpg_inst, hdf5_file)
@@ -323,10 +323,28 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         raw_output_idx = -1
         address = 0
         ndpg_inst = []
-        for k, instruction in enumerate(self.pseudoclock.clock):
+        for instruction in self.pseudoclock.clock:
             # print('############################################################################################################')
             # print(instruction)
             # print()
+
+            if instruction == 'WAIT':
+                # Change the previous instruction to have a stop_and_wait=True
+                # If this is the first instruction, add it to the start
+                if len(ndpg_inst) == 0:
+                    ndpg_inst.append({'address':address,
+                                    'duration':1,
+                                    'channel_state':channel_state.copy(),
+                                    'goto_address':0,
+                                    'goto_counter':0,
+                                    'stop_and_wait':True,
+                                    'hardware_trig_out':False,
+                                    'notify_computer':False,
+                                    'powerline_sync':False})
+                    address += 1
+                else:
+                    ndpg_inst[-1]['stop_and_wait'] = True
+                continue
 
             # This flag indicates whether we need a full clock tick, or are just updating an internal output
             only_internal = True
@@ -411,6 +429,22 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                                 'powerline_sync':False})
                 address += 1
 
+        # We are going to add on a "done" instruction. Ideally, this would be unnecessary, since the pulse generator 
+        #can be set to send a "finished" notification. But the problem is, the moment it is finished, it becomes re-triggerable
+        # again. This could be a problem if the trigger input is not a gated signal, but is instead a continuous periodic
+        # signal like from the AC line. Instead, we will treat the extra instruction added on the end as the "finished"
+        # notification, which is easy to do, as instructions can also notify the computer. It is set to have a large
+        # durattion, so blacs has time to transition to manual, and in so doing, it altomatically disables hardware triggering.
+        ndpg_inst.append({'address':address,
+                'duration':281474976710655,
+                'channel_state':channel_state.copy(),
+                'goto_address':0,
+                'goto_counter':0,
+                'stop_and_wait':False,
+                'hardware_trig_out':False,
+                'notify_computer':True,
+                'powerline_sync':False})
+
 
         # index to keep track of where in output.raw_output the
         # pulseblaster channels are coming from
@@ -485,10 +519,11 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         #         ndpg_inst.append({'address':address, 'channels': channels.copy(), 'duration':low_time, 'goto_address':goto_address, 'goto_counter':instruction['reps']-1,
         #                         'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
         #         address += 1
-        for inst in ndpg_inst:
-            cpy = inst.copy()
-            cpy['channel_state'] = inst['channel_state'][0:5]
-            print(cpy)
+
+        # for inst in ndpg_inst:
+        #     cpy = inst.copy()
+        #     cpy['channel_state'] = inst['channel_state'][0:5]
+        #     print(cpy)
         return ndpg_inst
 
 

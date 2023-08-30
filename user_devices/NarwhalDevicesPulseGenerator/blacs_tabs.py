@@ -337,6 +337,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
 
         # Notifications
         finished_notification_received = False
+        final_instruction_notification_received = False
         self.ui.check_notifytrigout.blockSignals(True)
         self.ui.check_notifytrigout.setChecked(state['notify_on_main_trig_out'])
         self.ui.check_notifytrigout.blockSignals(False)
@@ -349,6 +350,10 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
                 self.ui.text_notifications.append(time_string + ': Main trigger out activated.')
             if notification['address_notify']:
                 self.ui.text_notifications.append(time_string + f": Instruction {notification['address']} activated.")
+                # It is not ideal that I am requesting the final_instruction_address each time an address_notify is recieved. But it is the only sensible place to put the call.
+                final_instruction_address = yield(self.queue_work(self._primary_worker,'get_final_instruction_address')) 
+                if notification['address'] == final_instruction_address:
+                    final_instruction_notification_received = True
             if notification['finished_notify']:
                 self.ui.text_notifications.append(time_string + ': Run finished.')
                 finished_notification_received = True
@@ -369,10 +374,18 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # of state that means the thing is done, I can just check the notifications.
         # One possible way to keep all the manual controls active, is to pass the notify_queue to the reset method
         # and have that method also pass done, but not sure if that can be done, or if it is a good idea.
-        if notify_queue is not None and finished_notification_received:
+
+        # see labscript_devices.py file for more explanation, but I had to use an address_notification instead of
+        # a finished_notification to make this work with if there are continuous hardware triggers. 
+        if notify_queue is not None and final_instruction_notification_received:
             notify_queue.put('done')
             self.statemachine_timeout_remove(self.status_monitor)
             self.statemachine_timeout_add(1000,self.status_monitor)
+        # #Old way
+        # if notify_queue is not None and finished_notification_received:
+        #     notify_queue.put('done')
+        #     self.statemachine_timeout_remove(self.status_monitor)
+        #     self.statemachine_timeout_add(1000,self.status_monitor)
 
 
     # I may need to somehow disable all of the buttons in and user entry widgets during the "transition_to_buffered" phase

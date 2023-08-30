@@ -54,6 +54,11 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
     def get_device_info(self):
         # This is called only once by blacs_tabs.py so it can display the hardware/firmware versions etc
         return self.device_info
+    
+    def get_final_instruction_address(self):
+        # This is called by blacs_tabs.py at the start of the run, but I don't think that will work, because it
+        # I don't think "start" is called if the device is a slave psudoclockdevice
+        return self.final_instruction_address
 
     def check_status(self):
         # method for checking whether the shot has completed.
@@ -182,6 +187,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
                 
             final_instr = pulse_program[-1]
 
+        self.final_instruction_address = final_instr['address'] # hack to determine run finished without enabling hardware re-triggering
         final_values = {}
         for channel, channel_state in enumerate(final_instr['channel_state']):
             final_values[f'channel {channel}'] = channel_state
@@ -205,9 +211,11 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # return True on success
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_manual')
         state, powerline_state, notifications, pg_comms_in_errors, bytesdropped_error = self.check_status()
-        if not state['running'] and state['current_address'] == 0:
+        print(notifications)
+        if state['current_address'] == self.final_instruction_address:
             # If it is back in manual mode, make it ignore hardware triggers 
             self.pg.write_device_options(trigger_source='software')
+            self.pg.write_action(reset_run=True) #Needed because of the "run finished" hack
             return True
         else:
             return False
