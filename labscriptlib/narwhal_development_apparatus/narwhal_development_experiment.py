@@ -3,7 +3,7 @@ from user_devices.NarwhalDevicesPulseGenerator.labscript_devices import NarwhalD
 
 from labscript_devices.DummyIntermediateDevice import DummyIntermediateDevice
 
-NarwhalDevicesPulseGenerator(name='Narwhal_Devices_Pulse_Generator', serial_number='12582915')
+NarwhalDevicesPulseGenerator(name='Narwhal_Devices_Pulse_Generator', serial_number='12582916', trigger_on_powerline=False)
 
 #Connect DigitalOut to things like RF switches powering AOMs. This allows you to turn the AOM on or OFF at given times
 DigitalOut(name='digital_out1', parent_device=Narwhal_Devices_Pulse_Generator.direct_outputs, connection='channel 0')
@@ -29,26 +29,50 @@ if __name__ == '__main__':
     t = 0
     start()
     digital_out1.go_high(t)
-    t += 10E-9
+    t += 10E-3
     digital_out1.go_low(t)
-    t += 20E-9
-    t += wait ('my_test_wait', t , timeout = 2 )
-    # t += 20E-9
+    t += 2E-3
+    t += wait ('ACsync_my_test_wait', t , timeout = 2 )
     digital_out1.go_high(t)
-    t += 30E-9
+    t += 30E-3
     digital_out1.go_low(t)
     stop(t)
 
+    '''So, I have a problem.
+    Consider a situation where the input trigger is getting spammed regulalry with triggers. This could happen, for example,
+    if someone set up their experiment to have an AC line edge always trigger the PulseGen.
+    Now when I transition_to_buffered, the last thing I do is enable hardware triffers for a single run.
+    And then sometime after that, start_run() is called (if this is the master pseudoclock device).
+    The problem there, is that now there is a race condition between the software trigger in "start_run()"
+    and the hardware trigger, whcih could be spammed in often. For some setups this would be fine,
+    But I had a situation where the hardware started (and finished) a run, before the software trigger
+    was even called. Then the software trigger was called, so the run ran for a second time, and it also
+    got stuck half way because it was waiting for a re-trigger, which didn't come because hardware triggers had been 
+    disabled (by the first run finishing).
+
+    So, two things:
+    1. Look into how the runs differ depending on if they are a master or slave pseudoclock.
+    2. At least for the case of the master, ideally I need some way to avoide the race condition.
+        possibly, I could alter the FPGA code so that SOFTWARE triggers actually do retrigger SOFTWARE
+        DISABLED settings. Ie, a software trigger could ALWAYS set software_enable to true, and then also
+        trigger the device.
+
+    Also, implemt the "wait for powerline" feature. That should be easy enough.
+
+    '''
 
     # # simple manual digital out only. (Comment out clockline and intermediate device stuff)
     # t = 0
     # start()
     # digital_out1.go_high(t)
-    # t += 10E-9
+    # # t += 10E-9
+    # t += 1
     # digital_out1.go_low(t)
-    # t += 20E-9
+    # # t += 20E-9
+    # t += 2
     # digital_out1.go_high(t)
-    # t += 30E-9
+    # # t += 30E-9
+    # t += 3
     # digital_out1.go_low(t)
     # stop(t)
 

@@ -1,0 +1,1 @@
+The symbolic link points to the github repo, but other than that, it behaves identically as if the module was actually here. But it can be deleted without affecting the actual repo.

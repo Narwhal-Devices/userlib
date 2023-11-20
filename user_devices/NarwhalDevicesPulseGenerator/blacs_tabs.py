@@ -168,10 +168,10 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.button_reset.setToolTip('Reset')
 
         # Connect/make the Trigger in controls
-        self.ui.combo_triggersource = CustomComboBox(focusPolicy=QtCore.Qt.StrongFocus)
-        self.ui.combo_triggersource.addItems(['software', 'hardware', 'either', 'single_hardware'])
-        self.ui.combo_triggersource.currentTextChanged.connect(self.triggersource_textchanged)
-        self.ui.formLayout_triggerin.insertRow(0, QLabel("Trigger source"), self.ui.combo_triggersource)
+        self.ui.combo_accept_hardware_trigger = CustomComboBox(focusPolicy=QtCore.Qt.StrongFocus)
+        self.ui.combo_accept_hardware_trigger.addItems(['never', 'always', 'single_run', 'once'])
+        self.ui.combo_accept_hardware_trigger.currentTextChanged.connect(self.accept_hardware_trigger_textchanged)
+        self.ui.formLayout_triggerin.insertRow(0, QLabel("Accept hardware trigger"), self.ui.combo_accept_hardware_trigger)
         self.ui.check_waitforpowerline.toggled.connect(self.waitforpowerline_toggled)
         self.ui.doublespin_powerlinedelay = CustomDoubleSpinBox(minimum=0, maximum=41.943030, decimals=5, suffix='0 ms', focusPolicy=QtCore.Qt.StrongFocus)
         self.ui.doublespin_powerlinedelay.editingFinished.connect(self.powerlinedelay_editingfinished)
@@ -246,8 +246,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.label_serialnumber.setText(f"{device_info['serial_number']}")
         self.ui.label_firmwareversion.setText(f"{device_info['firmware_version']}")
         self.ui.label_hardwareversion.setText(f"{device_info['hardware_version']}")
-        self.ui.label_comport.setText(f"{device_info['comport']}")
-        
+        self.ui.label_comport.setText(f"{device_info['comport']}") 
 
     @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
     def status_monitor(self,notify_queue=None):
@@ -265,104 +264,113 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
             notify_queue (:class:`~queue.Queue`): Queue to notify when
                 the experiment is done.
 
-        """        
-        state, powerline_state, notifications, pg_comms_in_errors, bytesdropped_error = yield(self.queue_work(self._primary_worker,'check_status'))
+        """  
+        state, powerline_state, state_extras, notifications, pg_comms_in_errors, bytesdropped_error, cease_rapid_status_checks = yield(self.queue_work(self._primary_worker,'check_status'))
 
-        # Synchronisation
-        if powerline_state['powerline_locked']:
-            powerline_freq = 1/(powerline_state['powerline_period']*10E-9)
-        else:
-            powerline_freq = 0.0
-        self.ui.label_powerlinefrequency.setText(f'{powerline_freq:.3f} Hz')
-        self.ui.label_referenceclock.setText(f"{state['clock_source']}")
+        if state is not None and powerline_state is not None and state_extras is not None:
+            # Update UI widgets
+            # Synchronisation
+            if powerline_state['powerline_locked']:
+                powerline_freq = 1/(powerline_state['powerline_period']*10E-9)
+            else:
+                powerline_freq = 0.0
+            self.ui.label_powerlinefrequency.setText(f'{powerline_freq:.3f} Hz')
+            self.ui.label_referenceclock.setText(f"{state['clock_source']}")
+            # Status
+            self.ui.label_currentaddress.setText(f"{state['current_address']}")
+            self.ui.label_finaladdress.setText(f"{state['final_address']}")
+            run_time_seconds = state_extras['run_time']*10E-9
+            self.ui.label_totalruntime.setText(f"{int(run_time_seconds//60)}min {run_time_seconds%60:.3f}sec")
+            tick_pixmap = QtGui.QIcon(':/qtutils/fugue/tick').pixmap(QtCore.QSize(16, 16))
+            cross_pixmap = QtGui.QIcon(':/qtutils/fugue/cross').pixmap(QtCore.QSize(16, 16))
+            if state['running']:
+                self.ui.label_running.setPixmap(tick_pixmap)
+            else:
+                self.ui.label_running.setPixmap(cross_pixmap)
+            if state['software_run_enable']:
+                self.ui.label_enablesoftware.setPixmap(tick_pixmap)
+            else:
+                self.ui.label_enablesoftware.setPixmap(cross_pixmap)
+            if state['hardware_run_enable']:
+                self.ui.label_enablehardware.setPixmap(tick_pixmap)
+            else:
+                self.ui.label_enablehardware.setPixmap(cross_pixmap)
 
-        # Status
-        self.ui.label_currentaddress.setText(f"{state['current_address']}")
-        self.ui.label_finaladdress.setText(f"{state['final_ram_address']}")
-        tick_pixmap = QtGui.QIcon(':/qtutils/fugue/tick').pixmap(QtCore.QSize(16, 16))
-        cross_pixmap = QtGui.QIcon(':/qtutils/fugue/cross').pixmap(QtCore.QSize(16, 16))
-        if state['running']:
-            self.ui.label_running.setPixmap(tick_pixmap)
-        else:
-            self.ui.label_running.setPixmap(cross_pixmap)
-        if state['software_run_enable']:
-            self.ui.label_enablesoftware.setPixmap(tick_pixmap)
-        else:
-            self.ui.label_enablesoftware.setPixmap(cross_pixmap)
-        if state['hardware_run_enable']:
-            self.ui.label_enablehardware.setPixmap(tick_pixmap)
-        else:
-            self.ui.label_enablehardware.setPixmap(cross_pixmap)
+            self.ui.button_pause.blockSignals(True)
+            self.ui.button_pause.setChecked(not state['software_run_enable'])
+            self.ui.button_pause.blockSignals(False)
 
-        self.ui.button_pause.blockSignals(True)
-        self.ui.button_pause.setChecked(not state['software_run_enable'])
-        self.ui.button_pause.blockSignals(False)
+            # Why block signals? Because other parts of labscript can update the Pulse Generator
+            # internal settings, without going through the GUI. When the status_monitor then updates
+            # the GUI widgets to reflect the internal state of the Pulse Generator, this change would
+            # ordinarily trigger one of the widget_changed methods that I registered. This would then
+            # update the setting again, which is unnecessary and therefor wasetful.
 
-        
-        # Why block signals? Because other parts of labscript can update the Pulse Generator
-        # internal settings, without going through the GUI. When the status_monitor then updates
-        # the GUI widgets to reflect the internal state of the Pulse Generator, this change would
-        # ordinarily trigger one of the widget_changed methods that I registered. This would then
-        # update the setting again, which is unnecessary and therefor wasetful.
+            # Run mode
+            self.ui.combo_runmode.blockSignals(True)  
+            self.ui.combo_runmode.setCurrentText(state['run_mode'])
+            self.ui.combo_runmode.blockSignals(False)
 
-        # Run mode
-        self.ui.combo_runmode.blockSignals(True)  
-        self.ui.combo_runmode.setCurrentText(state['run_mode'])
-        self.ui.combo_runmode.blockSignals(False)
+            # Trigger in
+            self.ui.combo_accept_hardware_trigger.blockSignals(True)  
+            self.ui.combo_accept_hardware_trigger.setCurrentText(state['accept_hardware_trigger'])
+            self.ui.combo_accept_hardware_trigger.blockSignals(False)
 
-        # Trigger in
-        self.ui.combo_triggersource.blockSignals(True)  
-        self.ui.combo_triggersource.setCurrentText(state['trigger_source'])
-        self.ui.combo_triggersource.blockSignals(False)
+            self.ui.check_waitforpowerline.blockSignals(True)
+            self.ui.check_waitforpowerline.setChecked(powerline_state['trig_on_powerline'])
+            self.ui.check_waitforpowerline.blockSignals(False)
 
-        self.ui.check_waitforpowerline.blockSignals(True)
-        self.ui.check_waitforpowerline.setChecked(powerline_state['trig_on_powerline'])
-        self.ui.check_waitforpowerline.blockSignals(False)
+            if not self.ui.doublespin_powerlinedelay.user_editing: 
+                self.ui.doublespin_powerlinedelay.setEnabled(powerline_state['trig_on_powerline'])
+                self.ui.doublespin_powerlinedelay.blockSignals(True)
+                self.ui.doublespin_powerlinedelay.setValue(powerline_state['powerline_trigger_delay']*10E-9*1E3)
+                self.ui.doublespin_powerlinedelay.blockSignals(False)
 
-        if not self.ui.doublespin_powerlinedelay.user_editing: 
-            self.ui.doublespin_powerlinedelay.setEnabled(powerline_state['trig_on_powerline'])
-            self.ui.doublespin_powerlinedelay.blockSignals(True)
-            self.ui.doublespin_powerlinedelay.setValue(powerline_state['powerline_trigger_delay']*10E-9*1E3)
-            self.ui.doublespin_powerlinedelay.blockSignals(False)
+            # Trigger out
+            if not self.ui.doublespin_triggerduration.user_editing: 
+                self.ui.doublespin_triggerduration.blockSignals(True)
+                self.ui.doublespin_triggerduration.setValue(state['trigger_out_length']*10E-9*1E6)
+                self.ui.doublespin_triggerduration.blockSignals(False)      
+            if not self.ui.doublespin_triggerdelay.user_editing: 
+                self.ui.doublespin_triggerdelay.blockSignals(True)
+                self.ui.doublespin_triggerdelay.setValue(state['trigger_out_delay']*10E-9)
+                self.ui.doublespin_triggerdelay.blockSignals(False)  
+            # Notifications
+            self.ui.check_notifytrigout.blockSignals(True)
+            self.ui.check_notifytrigout.setChecked(state['notify_on_main_trig_out'])
+            self.ui.check_notifytrigout.blockSignals(False)
+            self.ui.check_notifyfinished.blockSignals(True)
+            self.ui.check_notifyfinished.setChecked(state['notify_on_run_finished'])
+            self.ui.check_notifyfinished.blockSignals(False)
 
-        # Trigger out
-        if not self.ui.doublespin_triggerduration.user_editing: 
-            self.ui.doublespin_triggerduration.blockSignals(True)
-            self.ui.doublespin_triggerduration.setValue(state['trigger_out_length']*10E-9*1E6)
-            self.ui.doublespin_triggerduration.blockSignals(False)      
-        if not self.ui.doublespin_triggerdelay.user_editing: 
-            self.ui.doublespin_triggerdelay.blockSignals(True)
-            self.ui.doublespin_triggerdelay.setValue(state['trigger_out_delay']*10E-9)
-            self.ui.doublespin_triggerdelay.blockSignals(False)  
+        # If the Pulse generator is sending lots of notifications, dont print them, and warn 
+        print_notifications = True
+        if len(notifications) > 1000:
+            print_notifications = False
 
-        # Notifications
         finished_notification_received = False
-        final_instruction_notification_received = False
-        self.ui.check_notifytrigout.blockSignals(True)
-        self.ui.check_notifytrigout.setChecked(state['notify_on_main_trig_out'])
-        self.ui.check_notifytrigout.blockSignals(False)
-        self.ui.check_notifyfinished.blockSignals(True)
-        self.ui.check_notifyfinished.setChecked(state['notify_on_run_finished'])
-        self.ui.check_notifyfinished.blockSignals(False)
         for notification in notifications:
-            time_string = str(datetime.fromtimestamp(notification['timestamp'])).split()[1][:-3]
-            if notification['trigger_notify']:
-                self.ui.text_notifications.append(time_string + ': Main trigger out activated.')
-            if notification['address_notify']:
-                self.ui.text_notifications.append(time_string + f": Instruction {notification['address']} activated.")
-                # It is not ideal that I am requesting the final_instruction_address each time an address_notify is recieved. But it is the only sensible place to put the call.
-                final_instruction_address = yield(self.queue_work(self._primary_worker,'get_final_instruction_address')) 
-                if notification['address'] == final_instruction_address:
-                    final_instruction_notification_received = True
-            if notification['finished_notify']:
-                self.ui.text_notifications.append(time_string + ': Run finished.')
-                finished_notification_received = True
+            if print_notifications:
+                time_string = str(datetime.fromtimestamp(notification['timestamp'])).split()[1][:-3]
+                if notification['trigger_notify']:
+                    self.ui.text_notifications.append(time_string + ': Main trigger out activated.')
+                if notification['address_notify']:
+                    self.ui.text_notifications.append(time_string + f": Instruction {notification['address']} activated.")
+                if notification['finished_notify']:
+                    self.ui.text_notifications.append(time_string + ': Run finished.')
+                    finished_notification_received = True   
+            elif notification['finished_notify']:
+                finished_notification_received = True   
+
         for comm_error in pg_comms_in_errors:
             time_string = str(datetime.fromtimestamp(comm_error['timestamp'])).split()[1][:-3]
             self.ui.text_notifications.append(time_string + f": Error - Pulse Generator recieved an invalid message from the host. {str(comm_error)}")
         for dropped_error in bytesdropped_error:
             time_string = str(datetime.fromtimestamp(dropped_error['timestamp'])).split()[1][:-3]
             self.ui.text_notifications.append(time_string + f": Error - The host recieved an invalid message from the Pulse Generator. {str(dropped_error)}")
+
+        if not print_notifications:
+            self.ui.text_notifications.append('Too many notifications. Not printing. Serial buffer is probably overflowing. Tab may crash soon.')
 
         # Determine the done condition.
         # Possible corner cases:
@@ -375,17 +383,16 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # One possible way to keep all the manual controls active, is to pass the notify_queue to the reset method
         # and have that method also pass done, but not sure if that can be done, or if it is a good idea.
 
-        # see labscript_devices.py file for more explanation, but I had to use an address_notification instead of
-        # a finished_notification to make this work with if there are continuous hardware triggers. 
-        if notify_queue is not None and final_instruction_notification_received:
+        # An abort from buffered was used. Stop the rapid checks
+        if cease_rapid_status_checks:
+            self.statemachine_timeout_remove(self.status_monitor)
+            self.statemachine_timeout_add(1000,self.status_monitor)           
+
+        # Run Finished successfully
+        if notify_queue is not None and finished_notification_received:
             notify_queue.put('done')
             self.statemachine_timeout_remove(self.status_monitor)
             self.statemachine_timeout_add(1000,self.status_monitor)
-        # #Old way
-        # if notify_queue is not None and finished_notification_received:
-        #     notify_queue.put('done')
-        #     self.statemachine_timeout_remove(self.status_monitor)
-        #     self.statemachine_timeout_add(1000,self.status_monitor)
 
 
     # I may need to somehow disable all of the buttons in and user entry widgets during the "transition_to_buffered" phase
@@ -416,8 +423,8 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         yield(self.queue_work(self._primary_worker,'set_runmode', runmode))
 
     @define_state(MODE_MANUAL,True) 
-    def triggersource_textchanged(self, triggersource, widget=None):
-        yield(self.queue_work(self._primary_worker,'set_triggersource', triggersource))
+    def accept_hardware_trigger_textchanged(self, accept_hardware_trigger, widget=None):
+        yield(self.queue_work(self._primary_worker,'set_accept_hardware_trigger', accept_hardware_trigger))
 
     @define_state(MODE_MANUAL,True) 
     def waitforpowerline_toggled(self, checked, widget=None):

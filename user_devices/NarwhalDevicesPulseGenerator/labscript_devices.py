@@ -1,23 +1,17 @@
 from labscript_utils import dedent
 
 from labscript import (
-    Device,
     PseudoclockDevice,
     Pseudoclock,
     ClockLine,
     IntermediateDevice,
-    DigitalQuantity,
     DigitalOut,
-    DDS,
-    DDSQuantity,
+    WaitMonitor,
     config,
     LabscriptError,
     set_passed_properties,
     compiler,
 )
-
-
-from labscript import PseudoclockDevice, config
 
 import numpy as np
 import time
@@ -78,10 +72,9 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
             "connection_table_properties": [
                 "serial_number",
                 "trigger_device",       #It is possible this MUST go in "device properties"
-                "trigger_connection"   #It is possible this MUST go in "device properties"
+                "trigger_connection"   #It is possible this MUST go in "device properties" NON OF THESE ARE BEING SAVED
             ],
             "device_properties": [
-                "trigger_type",
                 "trigger_out_length",
                 "trigger_out_delay",
                 "trigger_on_powerline",
@@ -97,11 +90,11 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         serial_number=None,
         trigger_device=None,
         trigger_connection=None,
-        trigger_type='either',
         trigger_out_length=10E-9,
         trigger_out_delay=0,
         trigger_on_powerline=False,
         powerline_trigger_delay=0,
+        use_wait_monitor=True,
     ):
         """Narwhal Devices Pulse Generator.
 
@@ -122,7 +115,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                 classes to determine instructions.
             trigger_type (str, optional): {'software', 'hardware', 'either', 'single_hardware'}
                 Determins what kind of trigger inputs will start a run. 
-                See also: ndpulsegen.transcode.encode_device_options [trigger_source]
+                See also: ndpulsegen.transcode.encode_device_options [accept_hardware_trigger]
             trigger_out_length (float, optional): ∈ [0, 2.55E-6] seconds. The duration of the pulses 
                 output from the Trigger Out physical port on the NDPG.
                 See also: ndpulsegen.transcode.encode_device_options
@@ -139,6 +132,8 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                 between the mains AC line crossing 0 volts in a positive direction, and the 
                 emission of a powerline_trigger.
                 See also: ndpulsegen.transcode.encode_powerline_trigger_options
+            use_wait_monitor (bool, optional): Configure the Pulse Generator to
+                perform its own wait monitoring.
         """
 
 
@@ -147,6 +142,9 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
 
         # Set the BLACS connections
         self.BLACS_connection = serial_number
+
+        # Wait monitor can only be used if this is the master pseudoclock
+        self.use_wait_monitor = use_wait_monitor and self.is_master_pseudoclock
 
         # This works
         # self.set_property('mynewpropname', 'I set this frim labscript_devices.py', 'connection_table_properties')
@@ -298,6 +296,10 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
 
         ndpg_inst = self.pseudo_inst_to_ndpg_inst()
         self.write_ndpg_inst_to_h5(ndpg_inst, hdf5_file)
+        
+        # I might need this in the blacs_workers bit for a couple of reasons:
+        # 1. If I am the master, then
+        self.set_property("is_master_pseudoclock", self.is_master_pseudoclock, location="device_properties",)
 
     def sec_to_cyc(self, object_in_seconds):
         cycle_period = 10E-9
@@ -318,32 +320,84 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         # for attr in dir(self._direct_output_clock_line):
         #     print('obj.%s = %r'%(attr, getattr(self._direct_output_clock_line, attr)))
 
+        print(compiler.wait_table)
+        print(type(compiler.wait_table))
+        # the wait table keys are the times in floats. Sort them so we can access them by index.
+        # Note, this will break if 
+        wait_table = [compiler.wait_table[key] for key in sorted(compiler.wait_table)]
+        print(type(self.pseudoclock.clock))
+        assert len(wait_table) == self.pseudoclock.clock.count('WAIT')
+        print(wait_table)
+
         channel_state = np.ones(24, dtype=np.int64)*-1 #-1 indicates that no value has been specified in the labscript experiment, so keep whatever value is set in the blacs GUI.
         # raw_output_idx = 0
         raw_output_idx = -1
         address = 0
         ndpg_inst = []
+        ACsync = False
+        wait_idx = 0
         for instruction in self.pseudoclock.clock:
             # print('############################################################################################################')
             # print(instruction)
             # print()
 
             if instruction == 'WAIT':
+                print('To implement a \'Wait for powerline\' instruction, I need to access the hdf file \'waits\' and check the label of the wait corresponding to this given wait (just keep a counter of waits to figure out the index. then, any wait with a \"wait_for_powerline\" prefex, will indicate a poweline wait.')
+                
+                ACsync = wait_table[wait_idx][0].startswith('ACsync')
+                wait_idx += 1
+                print('ACsync ', ACsync)
+                # I have a problem. Fundamentally, the pulse generator responds to BOTH Hardware triggers, AND AC Line after a wait, even if AC sync is in the instruction.
+                # Can I get around this? I will have to look at the FPGA code. 
+
+
                 # Change the previous instruction to have a stop_and_wait=True
                 # If this is the first instruction, add it to the start
+                # it it is an ACsync wait, you have to add two instructions. The first instruction of the pulse generator must not be a powerline_sync instruction, as
+                # it will respond the moment it is loaded into memory.
+
+            # Things to fix!!!!!!!! There is some bug in the powerline delay gui spinbox that make you not be able to make a 1 ms. you can make 1.0 ms. look into it.
+            # Need to set the powerline delay at the end of programming in blacs_worker.
+
+
                 if len(ndpg_inst) == 0:
-                    ndpg_inst.append({'address':address,
+                    if ACsync:
+                        # The first instruction can't be a powerline_sync instruction, so you actually have to add TWO instructions.
+                        ndpg_inst.append({'address':address,
+                                        'duration':1,
+                                        'channel_state':channel_state.copy(),
+                                        'goto_address':0,
+                                        'goto_counter':0,
+                                        'stop_and_wait':True,
+                                        'hardware_trig_out':False,
+                                        'notify_computer':False,
+                                        'powerline_sync':False})
+                        address += 1   
+                        ndpg_inst.append({'address':address,
                                     'duration':1,
                                     'channel_state':channel_state.copy(),
                                     'goto_address':0,
                                     'goto_counter':0,
-                                    'stop_and_wait':True,
+                                    'stop_and_wait':False,
                                     'hardware_trig_out':False,
                                     'notify_computer':False,
-                                    'powerline_sync':False})
-                    address += 1
+                                    'powerline_sync':True})
+                        address += 1  
+                    else:                
+                        ndpg_inst.append({'address':address,
+                                        'duration':1,
+                                        'channel_state':channel_state.copy(),
+                                        'goto_address':0,
+                                        'goto_counter':0,
+                                        'stop_and_wait':True,
+                                        'hardware_trig_out':False,
+                                        'notify_computer':False,
+                                        'powerline_sync':False})
+                        address += 1
+                    ACsync = False
                 else:
                     ndpg_inst[-1]['stop_and_wait'] = True
+
                 continue
 
             # This flag indicates whether we need a full clock tick, or are just updating an internal output
@@ -379,7 +433,8 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                                 'stop_and_wait':False,
                                 'hardware_trig_out':False,
                                 'notify_computer':False,
-                                'powerline_sync':False})
+                                'powerline_sync':ACsync})
+                ACsync = False
                 # raw_output_idx += 1
                 address +=1   
             else:
@@ -401,7 +456,8 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                                 'stop_and_wait':False,
                                 'hardware_trig_out':False,
                                 'notify_computer':False,
-                                'powerline_sync':False})
+                                'powerline_sync':ACsync})
+                ACsync = False
                 loop_start_address = address
                 address += 1
 
@@ -428,23 +484,6 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                                 'notify_computer':False,
                                 'powerline_sync':False})
                 address += 1
-
-        # We are going to add on a "done" instruction. Ideally, this would be unnecessary, since the pulse generator 
-        #can be set to send a "finished" notification. But the problem is, the moment it is finished, it becomes re-triggerable
-        # again. This could be a problem if the trigger input is not a gated signal, but is instead a continuous periodic
-        # signal like from the AC line. Instead, we will treat the extra instruction added on the end as the "finished"
-        # notification, which is easy to do, as instructions can also notify the computer. It is set to have a large
-        # durattion, so blacs has time to transition to manual, and in so doing, it altomatically disables hardware triggering.
-        ndpg_inst.append({'address':address,
-                'duration':281474976710655,
-                'channel_state':channel_state.copy(),
-                'goto_address':0,
-                'goto_counter':0,
-                'stop_and_wait':False,
-                'hardware_trig_out':False,
-                'notify_computer':True,
-                'powerline_sync':False})
-
 
         # index to keep track of where in output.raw_output the
         # pulseblaster channels are coming from
@@ -618,7 +657,7 @@ class NarwhalDevicesPulseGeneratorDirectOutputs(IntermediateDevice):
                     VERDICT: REQUIRED (use Args description for prawnblaster). connection_table_properties
 
                     
-    trigger_source: pass in?? If master, needs software for start, but maybe hardware for restart.
+    accept_hardware_trigger: pass in?? If master, needs software for start, but maybe hardware for restart.
                     if secondary, only need hardware. So, pass in with default as 'either'. connection_table_properties
                     
     trigger_on_powerline: pass in. device_properties
