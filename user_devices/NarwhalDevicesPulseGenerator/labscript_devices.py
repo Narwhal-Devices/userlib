@@ -12,9 +12,69 @@ from labscript import (
     set_passed_properties,
     compiler,
 )
-
 import numpy as np
 import time
+
+# This is taken straight from the PrawnBlaster. So who knows if it will work...
+# Define dummy pseudoclock/clockline/intermediatedevice to trick wait monitor
+# since everything is handled internally in this device
+#
+class _NDPGDummyPseudoclock(Pseudoclock):
+    """Dummy Pseudoclock labscript device used internally to allow 
+    :class:`~labscript.WaitMonitor` to work internally to the Narwhal Devices Pulse Generator."""
+    def add_device(self, device):
+        if isinstance(device, _NDPGDummyClockLine):
+            if self.child_devices:
+                raise LabscriptError(
+                    f"You are trying to access the special, dummy, PseudoClock of the Narwhal Devices Pulse Generator {self.pseudoclock_device.name}. This is for internal use only."
+                )
+            Pseudoclock.add_device(self, device)
+        else:
+            raise LabscriptError(
+                f"You are trying to access the special, dummy, PseudoClock of the Narwhal Devices Pulse Generator {self.pseudoclock_device.name}. This is for internal use only."
+            )
+
+    # do nothing, this is a dummy class!
+    def generate_code(self, *args, **kwargs):
+        pass
+
+
+class _NDPGDummyClockLine(ClockLine):
+    """Dummy Clockline labscript device used internally to allow 
+    :class:`~labscript.WaitMonitor` to work internally to the Narwhal Devices Pulse Generator."""
+    def add_device(self, device):
+        if isinstance(device, _NDPGDummyIntermediateDevice):
+            if self.child_devices:
+                raise LabscriptError(
+                    f"You are trying to access the special, dummy, ClockLine of the Narwhal Devices Pulse Generator {self.pseudoclock_device.name}. This is for internal use only."
+                )
+            ClockLine.add_device(self, device)
+        else:
+            raise LabscriptError(
+                f"You are trying to access the special, dummy, ClockLine of the Narwhal Devices Pulse Generator {self.pseudoclock_device.name}. This is for internal use only."
+            )
+
+    # do nothing, this is a dummy class!
+    def generate_code(self, *args, **kwargs):
+        pass
+
+
+class _NDPGDummyIntermediateDevice(IntermediateDevice):
+    """Dummy intermediate labscript device used internally to attach 
+    :class:`~labscript.WaitMonitor` objects to the Narwhal Devices Pulse Generator."""
+
+    def add_device(self, device):
+        if isinstance(device, WaitMonitor):
+            IntermediateDevice.add_device(self, device)
+        else:
+            raise LabscriptError(
+                "You can only connect an instance of WaitMonitor to the device %s.internal_wait_monitor_outputs"
+                % (self.pseudoclock_device.name)
+            )
+
+    # do nothing, this is a dummy class!
+    def generate_code(self, *args, **kwargs):
+        pass
 
 
 class NarwhalDevicesPulseGenerator(PseudoclockDevice):
@@ -194,9 +254,41 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         # Create the internal direct output clock_line
         self._direct_output_clock_line = ClockLine('%s_direct_output_clock_line'%name, self.pseudoclock, 'internal', ramping_allowed = False)
         # Create the internal intermediate device connected to the above clock line
-        # This will have the direct DigitalOuts of DDSs of the PulseBlaster connected to it
+        # This will have the direct DigitalOuts of the NDPG connected to it
         self._direct_output_device = NarwhalDevicesPulseGeneratorDirectOutputs('%s_direct_output_device'%name, self._direct_output_clock_line)
-    
+
+        if self.use_wait_monitor:
+            # Create internal devices for connecting to a wait monitor
+            self.__wait_monitor_dummy_pseudoclock = _NDPGDummyPseudoclock(
+                "%s__dummy_wait_pseudoclock" % name, self, "_"
+            )
+            self.__wait_monitor_dummy_clock_line = _NDPGDummyClockLine(
+                "%s__dummy_wait_clock_line" % name,
+                self.__wait_monitor_dummy_pseudoclock,
+                "_",
+            )
+            self.__wait_monitor_intermediate_device = (
+                _NDPGDummyIntermediateDevice(
+                    "%s_internal_wait_monitor_outputs" % name,
+                    self.__wait_monitor_dummy_clock_line,
+                )
+            )
+
+            # Create the wait monitor
+            WaitMonitor(
+                "%s__wait_monitor" % name,
+                self.internal_wait_monitor_outputs,
+                "internal",
+                self.internal_wait_monitor_outputs,
+                "internal",
+                self.internal_wait_monitor_outputs,
+                "internal",
+            )    
+
+    @property
+    def internal_wait_monitor_outputs(self):
+        return self.__wait_monitor_intermediate_device
+
     @property
     def pseudoclock(self):
         return self._pseudoclock
@@ -206,11 +298,12 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         return self._direct_output_device
 
     def add_device(self, device):
-        if not self.child_devices and isinstance(device, Pseudoclock):
+        if len(self.child_devices) <= 2 and isinstance(device, Pseudoclock):
             PseudoclockDevice.add_device(self, device)
         elif isinstance(device, Pseudoclock):
             raise LabscriptError(f'The {self.name} PseudoclockDevice only supports a single Pseudoclock, so it automatically creates one.' +
-                                 f'Instead of instantiating your own Pseudoclock object, please use the internal one stored in {self.name}.pseudoclock')
+                                 f'Instead of instantiating your own Pseudoclock object, please use the internal one stored in {self.name}.pseudoclock' +
+                                 f'A DummyPseudoclock is also created internally to support the internal WaitMonitor, but it is also added automatically.')
         elif isinstance(device, DigitalOut):
             raise LabscriptError(f'You have connected {device.name} directly to {self.name}, which is not allowed. You should instead specify ' + 
                                  f'the parent_device of {device.name} as {self.name}.direct_outputs')
@@ -272,21 +365,6 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                 #     dds_outputs.append(output) 
                 
         return dig_outputs
-
-    def _check_wait_monitor_ok(self):
-        if (
-            compiler.master_pseudoclock is self
-            and compiler.wait_table
-            and compiler.wait_monitor is None
-            and self.programming_scheme != 'pb_stop_programming/STOP'
-        ):
-            msg = """If using waits without a wait monitor, the PulseBlaster used as a
-                master pseudoclock must have
-                programming_scheme='pb_stop_programming/STOP'. Otherwise there is no way
-                for BLACS to distinguish between a wait, and the end of a shot. Either
-                use a wait monitor (see labscript.WaitMonitor for details) or set
-                programming_scheme='pb_stop_programming/STOP for %s."""
-            raise LabscriptError(dedent(msg) % self.name)
 
   
     def generate_code(self, hdf5_file):
@@ -485,84 +563,6 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                                 'powerline_sync':False})
                 address += 1
 
-        # index to keep track of where in output.raw_output the
-        # pulseblaster channels are coming from
-        # starts at -1 because the internal flag should always tick on the first instruction and be 
-        # incremented (to 0) before it is used to index any arrays
-        # raw_output_idx = -1 
-
-        # address = 0
-        # # flagstring = '0'*self.n_flags # So that this variable is still defined if the for loop has no iterations
-        # # channels = [2]*self.n_channels # 2 will specify that the flag should take the value from blacs at runtime
-        # channels = np.full(24, False)
-        # for k, instruction in enumerate(self.pseudoclock.clock):
-        #     print(instruction)
-        #     if instruction == 'WAIT':
-        #         # This is a wait pseudoinstruction. For the narwhal pulsegen, any instuction can contain a wait tag. Just add
-        #         # a wait tag to the last instruction. That instuction is executed, and then the clock pauses just before the next instruction. 
-        #         if len(ndpg_inst) > 0:
-        #             ndpg_inst[-1]['stop_and_wait'] = True
-        #         else:
-        #             raise LabscriptError(f'You tried to make \"WAIT\" at the very start of execution time')
-        #         continue
-        #     # This flag indicates whether we need a full clock tick, or are just updating an internal output
-        #     only_internal = True
-        #     # find out which clock flags are ticking during this instruction
-        #     for clock_line in instruction['enabled_clocks']:
-        #         if clock_line == self._direct_output_clock_line: 
-        #             # advance raw_output_idx (the index keeping track of internal clockline output)
-        #             raw_output_idx += 1
-        #         else:
-        #             channel_index = int(clock_line.connection.split()[1]) 
-        #             # channels[channel_index] = 1
-        #             channels[channel_index] = True
-        #             # We are not just using the internal clock line
-        #             only_internal = False
-            
-        #     # Set all the digital outputs to their value specified by raw_outputs
-        #     for output in dig_outputs:
-        #         channel_index = int(output.connection.split()[1])
-        #         # channels[channel_index] = int(output.raw_output[raw_output_idx])
-        #         channels[channel_index] = output.raw_output[raw_output_idx]
-        #         print(output.raw_output[raw_output_idx])
-            
-        #     if only_internal:
-        #         # Just flipping any direct_outputs that need flipping, and holding that state for the required step time
-        #         ndpg_inst.append({'address':address, 'channels': channels.copy(), 'duration':self.sec_to_cyc(instruction['step']), 'goto_address':0, 'goto_counter':0,
-        #                         'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
-        #         address += 1
-        #     else:
-        #         # the pseudoinstruction calls for us to make a pulse. So on the required channels, you need to go high, then low, and loop back to high for the required number of repetitions
-        #         if self.pulse_width == 'symmetric':
-        #             high_time = self.sec_to_cyc(instruction['step']/2)
-        #         else:
-        #             high_time = self.sec_to_cyc(self.pulse_width)
-
-        #         # Tick high
-        #         # print(channels)
-        #         ndpg_inst.append({'address':address, 'channels': channels.copy(), 'duration':high_time, 'goto_address':0, 'goto_counter':0,
-        #                         'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
-        #         address += 1
-
-        #         # Low time is whatever is left:
-        #         low_time = self.sec_to_cyc(instruction['step']) - high_time
-
-        #         # Any enabled clocklines (that are not _direct_output_clockline) now needs to go low, so set these channels to 0
-        #         for clock_line in instruction['enabled_clocks']:
-        #             if clock_line != self._direct_output_clock_line:
-        #                 channel_index = int(clock_line.connection.split()[1])
-        #                 channels[channel_index] = False
-
-        #         # Tock low
-        #         goto_address = len(ndpg_inst)-1 #loop back to the last instruction (this is ignored by hardware is goto_counter==0)
-        #         ndpg_inst.append({'address':address, 'channels': channels.copy(), 'duration':low_time, 'goto_address':goto_address, 'goto_counter':instruction['reps']-1,
-        #                         'stop_and_wait':False, 'hardware_trig_out':False, 'notify_computer':False, 'powerline_sync':False})
-        #         address += 1
-
-        # for inst in ndpg_inst:
-        #     cpy = inst.copy()
-        #     cpy['channel_state'] = inst['channel_state'][0:5]
-        #     print(cpy)
         return ndpg_inst
 
 
