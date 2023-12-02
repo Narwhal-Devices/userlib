@@ -1,4 +1,4 @@
-from labscript import start, stop, add_time_marker, AnalogOut, DigitalOut, ClockLine, wait, Trigger
+from labscript import start, stop, wait, add_time_marker, AnalogOut, DigitalOut, ClockLine, Trigger
 from user_devices.NarwhalDevicesPulseGenerator.labscript_devices import NarwhalDevicesPulseGenerator
 
 from labscript_devices.DummyIntermediateDevice import DummyIntermediateDevice
@@ -31,7 +31,7 @@ if __name__ == '__main__':
     digital_out1.go_high(t)
     t += 10E-3
     digital_out1.go_low(t)
-    t += 2E-3
+    t += 1E-3
     t += wait ('ACsync_my_test_wait', t , timeout = 2 )
     digital_out1.go_high(t)
     t += 30E-3

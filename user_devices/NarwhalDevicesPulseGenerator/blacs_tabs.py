@@ -269,6 +269,11 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
 
         if state is not None and powerline_state is not None and state_extras is not None:
             # Update UI widgets
+
+            # Digital values (not sure if this is how I am supposed to update them)
+            for channel, channel_state in enumerate(state['state']):
+                self._DO[f'channel {channel}'].set_value(channel_state,program=False)
+
             # Synchronisation
             if powerline_state['powerline_locked']:
                 powerline_freq = 1/(powerline_state['powerline_period']*10E-9)
@@ -364,7 +369,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
 
         for comm_error in pg_comms_in_errors:
             time_string = str(datetime.fromtimestamp(comm_error['timestamp'])).split()[1][:-3]
-            self.ui.text_notifications.append(time_string + f": Error - Pulse Generator recieved an invalid message from the host. {str(comm_error)}")
+            self.ui.text_notifications.append(time_string + f": Error - Pulse Generator encountered a problem -> {str(comm_error)}")
         for dropped_error in bytesdropped_error:
             time_string = str(datetime.fromtimestamp(dropped_error['timestamp'])).split()[1][:-3]
             self.ui.text_notifications.append(time_string + f": Error - The host recieved an invalid message from the Pulse Generator. {str(dropped_error)}")

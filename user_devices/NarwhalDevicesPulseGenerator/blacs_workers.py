@@ -1,8 +1,10 @@
 from blacs.tab_base_classes import Worker
-import labscript_utils.h5_lock
-import h5py
+import labscript_utils.h5_lock, h5py
+import zprocess
+import time
 import numpy as np
 import labscript_utils.properties
+from labscript_utils.connections import _ensure_str
 import ndpulsegen
 import queue
 
@@ -18,37 +20,30 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # device and/or instantiate the API from the device
         # manufacturer
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.init')
+        # Connect to pulse generator and save device info
         self.pg = ndpulsegen.PulseGenerator()
         self.pg.connect(self.serial_number)
-
         self.pg.write_echo(b'N')
         self.device_info = self.pg.msgin_queues['echo'].get()
         self.device_info['comport'] = self.pg.ser.port
 
+        # Deliberatly don't change current settings. Will allow BLACS to crasha nd restart without affecting a running run
+
         # Waits and waitmonitor related stuff
+        self.all_waits_finished = zprocess.Event("all_waits_finished", type="post")
+        self.wait_durations_analysed = zprocess.Event(
+            "wait_durations_analysed", type="post"
+        )
+        self.wait_completed = zprocess.Event("wait_completed", type="post")
         self.current_wait = 0
         self.wait_table = None
         self.measured_waits = None
         self.wait_timeout = None
+        self.h5_file = None
+        self.started = False
+        self.timeout_time = None
 
-        # print(self.trigger_type)
-        print(self.trigger_device)
-        print(self.connection_table_properties)
-
-        # print(self.device_properties["trigger_out_length"])
-        # print(self.max_instructions)
-        # I need to see how and where the settings are supposed to be set/passed in. Most are probably set in the connection table and stored in the self.settings['connection_table'].find_by_name(self.device_name) or something 
-        self.pg.write_device_options(run_mode='single', accept_hardware_trigger='never', trigger_out_length=1, trigger_out_delay=0, notify_on_main_trig_out=False, notify_when_run_finished=True, software_run_enable=True)
-        # Need to write all settings, as they may have been changed in manual mode. Most are specified by sensible options to run in buffered mode
-        #  
-        # trigger_on_powerline
-        # powerline_trigger_delay
-        # trigger_out_length
-        # trigger_out_delay
-        # Maybe accept_hardware_trigger
-        # Dont need to set final_address 
-        # self.pg.write_powerline_trigger_options(trigger_on_powerline=None, powerline_trigger_delay=None)
-        # self.pg.write_device_options(, run_mode='single', accept_hardware_trigger='always', trigger_out_length=None, trigger_out_delay=None, notify_on_main_trig_out=True, notify_when_run_finished=True, software_run_enable=True)
+        # Misc other stuff 
         self.cease_rapid_timer_status_checks_in_blacs_tabs = False
 
     def start_run(self):
@@ -59,6 +54,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
 
         # I need to figure out if this is only called for the master pseudoclock. If is is not called for the slaves, then I need to set software_run_enable=True
         # at the end of the transition_to_buffered function.
+        self.started = True
         self.pg.write_action(trigger_now=True)
 
     def get_device_info(self):
@@ -122,6 +118,33 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
             cease_rapid_status_checks = True
         else:
             cease_rapid_status_checks = False
+
+        # Check notifications for addresses corresponding to waits. Yes, this is more complex than it needs to be.
+        if (self.started and self.wait_table is not None and self.current_wait < len(self.wait_table)):
+            for notification in notifications:
+                if notification['address_notify']:
+                    address = notification['address']
+                    if address in self.wait_start_instructions:
+                        self.wait_start_instructions[address]['run_time'] = notification['run_time']
+                        self.timeout_time = time.time() + self.wait_start_instructions[address]['wait_timeout']
+                        self.timeout_address = address
+                    if address in self.wait_end_instructions:
+                        wait_start_instruction = self.wait_start_instructions[self.wait_end_instructions[address]['start_address']]
+                        wait_duration = notification['run_time'] - wait_start_instruction['run_time'] - wait_start_instruction['instruction_duration']
+                        self.measured_waits[self.current_wait] = wait_duration*10E-9
+                        # Inform any interested parties that a wait has completed:
+                        self.wait_completed.post(self.h5_file, data=_ensure_str(self.wait_table[self.current_wait]["label"]),)
+                        self.current_wait += 1
+                        self.timeout_time = None
+
+        if self.timeout_time is not None and time.time() >= self.timeout_time:
+            # waiting for too long, restart the pulse generator
+            self.timeout_time = None
+            state = self.pg.get_state() # Try and avoid the race condition by looking at the state imeadiately before retriggering
+            if state['running'] == False and state['current_address'] == self.timeout_address:
+                self.pg.write_action(trigger_now=True)
+                self.wait_timeout[self.current_wait] = True
+            
         return state, powerline_state, state_extras, notifications, pg_comms_in_errors, bytesdropped, cease_rapid_status_checks
 
 
@@ -162,17 +185,15 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # after the shot completes .
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_buffered')
 
-        '''I cant add the firmware number, to the device_folder attributes. The file is read only here.
-        I think I am just giving up on chaning the connection_table_properties for the device. or the device attributes.
-        '''
+        self.started = False    # Shouldn't be needed,, but does no harm
 
-        print(initial_values)
         initial_channel_state = np.zeros(24, dtype=np.int64)
         for channel_label, channel_state in initial_values.items():
             channel = int(channel_label.split()[1])
             initial_channel_state[channel] = int(channel_state)
-
-
+        
+        # needed for saving data at the end of the run
+        self.h5_file = h5file
         with h5py.File(h5file, 'r') as hdf5_file:
             # device_properties = labscript_utils.properties.get(hdf5_file, device_name, 'device_properties')
             # self.is_master_pseudoclock = device_properties['is_master_pseudoclock']
@@ -180,74 +201,89 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
 
             # Note that this get() method needs the actual open hdf5_file object, not the directory of the h5file, which is what is passed into the transition_to_buffered method
             self.device_properties = labscript_utils.properties.get(hdf5_file, device_name, "device_properties")
-            print(self.device_properties)
+
             group = hdf5_file[f'devices/{device_name}']
             pulse_program = group['PULSE_PROGRAM'][:]
             self.is_master_pseudoclock = self.device_properties["is_master_pseudoclock"]
 
-            # Get details of waits to check if any are mains AC sync waits
+            # If this device is being used as the wait monitor, set up required stuff to record waits
             waits_dset = hdf5_file["waits"]
             acquisition_device = waits_dset.attrs["wait_monitor_acquisition_device"]
             timeout_device = waits_dset.attrs["wait_monitor_timeout_device"]
-            # if (
-            #     len(waits_dset) > 0
-            #     and acquisition_device
-            #     == "%s_internal_wait_monitor_outputs" % device_name
-            #     and timeout_device == "%s_internal_wait_monitor_outputs" % device_name
-            # ):
-            if len(waits_dset) > 0: # just keep it simple for now
+            if (
+                len(waits_dset) > 0
+                and acquisition_device
+                == "%s_internal_wait_monitor_outputs" % device_name
+                and timeout_device == "%s_internal_wait_monitor_outputs" % device_name
+            ):
                 self.wait_table = waits_dset[:]
                 self.measured_waits = np.zeros(len(self.wait_table))
                 self.wait_timeout = np.zeros(len(self.wait_table), dtype=bool)
+
             else:
-                self.wait_table = (
-                    None  # This device doesn't need to worry about looking at waits
-                )
+                # This device doesn't need to worry about looking at waits
+                self.wait_table = (None)  
                 self.measured_waits = None
                 self.wait_timeout = None
 
+            self.wait_start_instructions = {}
+            self.wait_end_instructions = {}
+            self.current_wait = 0
 
 
             # for now, don't worry which device is the wait monitor, just make it work with AC mains
             # waits_acquisition_device = waits_dset.attrs["wait_monitor_acquisition_device"]
 
-            # Not all channels must be assigned in the labscript file. Any that aren't, keep them at the value on the GUI
+            # It is not required that all channels be assigned in the labscript file. Any that aren't, keep them at the value on the GUI
             instruction_0_channel_state = pulse_program[0]['channel_state']
             unspecified_channels_index = instruction_0_channel_state == -1
             unspecified_channels_state = initial_channel_state[unspecified_channels_index]
             
+            wait_idx = 0
             instructions = []
             for instruction in pulse_program:
-                # print(instruction)
-                # Not all channels must be assigned in the labscript file. Any that aren't, keep them at the value on the GUI
+
+                #Any unasigned channels get the value on the GUI
                 channel_state = instruction['channel_state']
                 channel_state[unspecified_channels_index] = unspecified_channels_state
-                print(instruction)
-                print()
+
                 encoded_instruction = ndpulsegen.encode_instruction(address=instruction['address'], duration=instruction['duration'], 
                                                             state=channel_state, goto_address=instruction['goto_address'], 
                                                             goto_counter=instruction['goto_counter'], stop_and_wait=instruction['stop_and_wait'], 
                                                             hardware_trig_out=instruction['hardware_trig_out'], notify_computer=instruction['notify_computer'], 
                                                             powerline_sync=instruction['powerline_sync'])
                 instructions.append(encoded_instruction)
+
+                # For stop and wait instructions, record the address of both the wait_start instruction, and the wait_end instruction (which is probably just +1)
+                if instruction['stop_and_wait']:
+                    self.wait_start_instructions[instruction['address']] = {'wait_index':wait_idx, 
+                                                                            'instruction_duration':instruction['duration'],
+                                                                            'wait_timeout':self.wait_table[wait_idx][2] + instruction['duration']*10E-9}
+                    end_address = instruction['address'] + 1 if instruction['goto_counter'] == 0 else instruction['goto_address']
+                    if instruction['goto_counter'] == 0:
+                        end_address = instruction['address'] + 1
+                    else:
+                        end_address = instruction['goto_address']
+                    self.wait_end_instructions[end_address] = {'start_address':instruction['address']}
+                    wait_idx +=1 
                 
             final_instr = pulse_program[-1]
 
-        self.final_instruction_address = final_instr['address'] # hack to determine run finished without enabling hardware re-triggering
+        # Just used to confirm the run has finished when transitioning back to manual
+        self.final_instruction_address = final_instr['address'] 
+        
+        # blacs requires the expected final state to be returned from this function
         final_values = {}
         for channel, channel_state in enumerate(final_instr['channel_state']):
             final_values[f'channel {channel}'] = channel_state
         
-        print('boop')
-        [print(key,':',value) for key, value in self.pg.get_state().items()]
-        print('doop')
+
         # Since the Pulse Generator could technically be running (if, for example, someone was playing around with the manual mode)
         # We reset it so it is in a known state. It does no harm to be safe.
         self.pg.write_device_options(accept_hardware_trigger='never')
         self.pg.write_action(reset_run=True)
 
         self.pg.write_instructions(instructions)
-
         self.pg.write_powerline_trigger_options(trigger_on_powerline=self.device_properties["trigger_on_powerline"], powerline_trigger_delay=int(np.round(self.device_properties["powerline_trigger_delay"]/10E-9)))
 
         # The main difference (so far) is that the master pseudoclock has its software_enable set to false, to enforce it waiting for a software trigger (ignore any hardware triggers it might recieve)
@@ -255,25 +291,51 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         if self.is_master_pseudoclock:
             self.pg.write_device_options(final_address=final_instr['address'], run_mode='single', accept_hardware_trigger='single_run', trigger_out_length=int(np.round(self.device_properties["trigger_out_length"]/10E-9)), trigger_out_delay=int(np.round(self.device_properties["trigger_out_delay"]/10E-9)), notify_on_main_trig_out=True, notify_when_run_finished=True, software_run_enable=False)
         else:
+            self.started = True
             self.pg.write_device_options(final_address=final_instr['address'], run_mode='single', accept_hardware_trigger='single_run', trigger_out_length=int(np.round(self.device_properties["trigger_out_length"]/10E-9)), trigger_out_delay=int(np.round(self.device_properties["trigger_out_delay"]/10E-9)), notify_on_main_trig_out=True, notify_when_run_finished=True, software_run_enable=True)
-        print('floop')
-        [print(key,':',value) for key, value in self.pg.get_state().items()]
-        print('droop')
         return final_values
 
 
     def transition_to_manual(self):
-        # Called when the shot has finished , the device should
-        # be placed back into manual mode
-        # return True on success
-        '''Note. You only need all these checks if you WANT the system to tell you if something unexpected happened.
-        You can ALWAYS, just reset the run (and disallow hardware triggers).'''
+        """Transition the NDPG back to manual mode from buffered execution at
+        the end of a shot.
+
+        Returns:
+            bool: `True` if transition to manual is successful.
+        """
+
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_manual')
-        state, powerline_state, state_extras, notifications, pg_comms_in_errors, bytesdropped_error, cease_rapid_status_checks = self.check_status()
-        [print(key,':',value) for key, value in state.items()]
+        self.started = False
+        with h5py.File(self.h5_file, "a") as hdf5_file:
+            # Save some divice info while you have access to the hdf file
+            NDPG_group = hdf5_file[f'/devices/{self.device_name}']
+            NDPG_group.attrs['firmware_version'] = self.device_info['firmware_version']
+            NDPG_group.attrs['hardware_version'] = self.device_info['hardware_version']
+            NDPG_group.attrs['serial_number'] = self.device_info['serial_number']
+            NDPG_group.attrs['comport'] = self.device_info['comport']
+
+            if self.wait_table is not None:
+                # Save info about any waits, and let the system know we have finished analysing waits.
+                dtypes = [
+                    ("label", "a256"),
+                    ("time", float),
+                    ("timeout", float),
+                    ("duration", float),
+                    ("timed_out", bool),
+                ]
+                data = np.empty(len(self.wait_table), dtype=dtypes)
+                data["label"] = self.wait_table["label"]
+                data["time"] = self.wait_table["time"]
+                data["timeout"] = self.wait_table["timeout"]
+                data["duration"] = self.measured_waits
+                data["timed_out"] = self.wait_timeout
+
+                hdf5_file.create_dataset("/data/waits", data=data)
+
+                self.wait_durations_analysed.post(self.h5_file)
+
+        state = self.pg.get_state()
         if state['running'] == False and state['current_address'] == self.final_instruction_address:
-            # It is back in manual mode.
-            # Neither of the next two commands should be necessary. But they don't take long and do no harm. 
             self.pg.write_device_options(accept_hardware_trigger='never')   # Should automatically be placed back in this mode, but does no harm.
             self.pg.write_action(reset_run=True) # Should not be needed. But does no harm.
             return True
@@ -285,6 +347,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # shot is aborted prior to the initial trigger
         # return True on success
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.abort_transition_to_buffered')
+        self.started = False
         self.pg.write_device_options(accept_hardware_trigger='never')
         self.pg.write_action(reset_run=True) # Should not be required, unless the device was triggered by a hardware trigger before we could disallow it.
         return True
@@ -294,6 +357,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # the execution of the shot ( after the initial trigger )
         # return True on success
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.abort_buffered')
+        self.started = False
         self.pg.write_device_options(accept_hardware_trigger='never')
         self.pg.write_action(reset_run=True)
         self.cease_rapid_timer_status_checks_in_blacs_tabs = True
