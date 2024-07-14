@@ -1,1 +1,6 @@
 The symbolic link points to the github repo, but other than that, it behaves identically as if the module was actually here. But it can be deleted without affecting the actual repo.
+
+command usewd to create it:
+
+C:\Users\rorys\labscript-suite\userlib\pythonlib>mklink /D "C:\Users\rorys\labscript-suite\userlib\pythonlib\ndpulsegen" "C:\NarwhalDevices\GitHub repos\narwhaldevs-pulsegen\src\ndpulsegen"
+symbolic link created for C:\Users\rorys\labscript-suite\userlib\pythonlib\ndpulsegen <<===>> C:\NarwhalDevices\GitHub repos\narwhaldevs-pulsegen\src\ndpulsegen
