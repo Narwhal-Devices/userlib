@@ -393,6 +393,15 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
             self.statemachine_timeout_remove(self.status_monitor)
             self.statemachine_timeout_add(1000,self.status_monitor)           
 
+
+        # if notify_queue is not None or finished_notification_received:
+        #     print()
+        #     print('serial number',self.serial_number)
+        #     print('notify queue:', notify_queue)
+        #     print('finished_notification_received', finished_notification_received)
+        #     print('cease_rapid_status_checks', cease_rapid_status_checks)
+        #     print()
+
         # Run Finished successfully
         if notify_queue is not None and finished_notification_received:
             notify_queue.put('done')

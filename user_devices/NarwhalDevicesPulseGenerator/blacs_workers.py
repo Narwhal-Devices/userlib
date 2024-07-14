@@ -7,6 +7,10 @@ import labscript_utils.properties
 from labscript_utils.connections import _ensure_str
 import ndpulsegen
 import queue
+import portalocker
+import tempfile
+import os
+
 
 #Temproary
 import inspect
@@ -22,7 +26,15 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.init')
         # Connect to pulse generator and save device info
         self.pg = ndpulsegen.PulseGenerator()
-        self.pg.connect(self.serial_number)
+
+        # ndpulsegen/comms.py hogs all the serial stuff when it is trying to connect. If two Pulse generators do this at the same time
+        # they can block eache other. This implements a lock so only one can attempt to connect at a time.
+        temp_dir = tempfile.gettempdir()
+        lock_file_path = os.path.join(temp_dir, 'NDPG_serial_connection.lock')
+        with portalocker.Lock(lock_file_path, timeout=10):
+            self.pg.connect(self.serial_number)
+
+
         self.pg.write_echo(b'N')
         self.device_info = self.pg.msgin_queues['echo'].get()
         self.device_info['comport'] = self.pg.ser.port
@@ -187,7 +199,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
 
         self.started = False    # Shouldn't be needed,, but does no harm
 
-        initial_channel_state = np.zeros(24, dtype=np.int64)
+        initial_channel_state = np.zeros(24, dtype=np.int8)
         for channel_label, channel_state in initial_values.items():
             channel = int(channel_label.split()[1])
             initial_channel_state[channel] = int(channel_state)
@@ -210,16 +222,16 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
             waits_dset = hdf5_file["waits"]
             acquisition_device = waits_dset.attrs["wait_monitor_acquisition_device"]
             timeout_device = waits_dset.attrs["wait_monitor_timeout_device"]
-            if (
-                len(waits_dset) > 0
-                and acquisition_device
-                == "%s_internal_wait_monitor_outputs" % device_name
-                and timeout_device == "%s_internal_wait_monitor_outputs" % device_name
-            ):
+
+            is_wait_monitor = (acquisition_device == "%s_internal_wait_monitor_outputs" % device_name 
+                               and timeout_device == "%s_internal_wait_monitor_outputs" % device_name
+                               and len(waits_dset) > 0)
+                                    
+
+            if is_wait_monitor:
                 self.wait_table = waits_dset[:]
                 self.measured_waits = np.zeros(len(self.wait_table))
                 self.wait_timeout = np.zeros(len(self.wait_table), dtype=bool)
-
             else:
                 # This device doesn't need to worry about looking at waits
                 self.wait_table = (None)  
@@ -230,9 +242,6 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
             self.wait_end_instructions = {}
             self.current_wait = 0
 
-
-            # for now, don't worry which device is the wait monitor, just make it work with AC mains
-            # waits_acquisition_device = waits_dset.attrs["wait_monitor_acquisition_device"]
 
             # It is not required that all channels be assigned in the labscript file. Any that aren't, keep them at the value on the GUI
             instruction_0_channel_state = pulse_program[0]['channel_state']
@@ -255,11 +264,10 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
                 instructions.append(encoded_instruction)
 
                 # For stop and wait instructions, record the address of both the wait_start instruction, and the wait_end instruction (which is probably just +1)
-                if instruction['stop_and_wait']:
+                if is_wait_monitor and instruction['stop_and_wait']:
                     self.wait_start_instructions[instruction['address']] = {'wait_index':wait_idx, 
                                                                             'instruction_duration':instruction['duration'],
                                                                             'wait_timeout':self.wait_table[wait_idx][2] + instruction['duration']*10E-9}
-                    end_address = instruction['address'] + 1 if instruction['goto_counter'] == 0 else instruction['goto_address']
                     if instruction['goto_counter'] == 0:
                         end_address = instruction['address'] + 1
                     else:
@@ -307,7 +315,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_manual')
         self.started = False
         with h5py.File(self.h5_file, "a") as hdf5_file:
-            # Save some divice info while you have access to the hdf file
+            # Save some device info while you have access to the hdf file
             NDPG_group = hdf5_file[f'/devices/{self.device_name}']
             NDPG_group.attrs['firmware_version'] = self.device_info['firmware_version']
             NDPG_group.attrs['hardware_version'] = self.device_info['hardware_version']

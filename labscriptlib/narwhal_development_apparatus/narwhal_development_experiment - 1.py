@@ -3,7 +3,7 @@ from user_devices.NarwhalDevicesPulseGenerator.labscript_devices import NarwhalD
 
 from labscript_devices.DummyIntermediateDevice import DummyIntermediateDevice
 
-NarwhalDevicesPulseGenerator(name='Narwhal_Devices_Pulse_Generator', serial_number='12582916', trigger_on_powerline=False)
+NarwhalDevicesPulseGenerator(name='Narwhal_Devices_Pulse_Generator', serial_number='12582915', trigger_on_powerline=False)
 
 #Connect DigitalOut to things like RF switches powering AOMs. This allows you to turn the AOM on or OFF at given times
 DigitalOut(name='digital_out1', parent_device=Narwhal_Devices_Pulse_Generator.direct_outputs, connection='channel 0')

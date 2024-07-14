@@ -5,10 +5,9 @@ NarwhalDevicesPulseGenerator(name='NDPG0', serial_number='12582915')
 DigitalOut(name='NDPG0_DO0', parent_device=NDPG0.direct_outputs, connection='channel 0')
 
 
-NarwhalDevicesPulseGenerator(name='NDPG1', serial_number='12582917', trigger_device=NDPG0.direct_outputs, trigger_connection='channel 16')
+NarwhalDevicesPulseGenerator(name='NDPG1', serial_number='12582917', trigger_device=NDPG0.direct_outputs, trigger_connection='channel 23')
 DigitalOut(name='NDPG1_DO0', parent_device=NDPG1.direct_outputs, connection='channel 0')
 
-# to do: mahe the status check in blacs only depen on if the running is true. will delay by max 1swconf but is very simple and dependable
 
 if __name__ == '__main__':
     # Begin issuing labscript primitives

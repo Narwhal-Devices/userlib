@@ -130,10 +130,15 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
     @set_passed_properties(
         property_names={
             "connection_table_properties": [
-                "trigger_device",       #It is possible this MUST go in "device properties"
-                "trigger_connection"   #It is possible this MUST go in "device properties" NON OF THESE ARE BEING SAVED
             ],
             "device_properties": [
+                "clock_limit",
+                "clock_resolution",
+                "trigger_edge_type",
+                "trigger_minimum_duration",
+                "minimum_recovery_time",
+                "trigger_delay",
+                "wait_delay",
                 "trigger_out_length",
                 "trigger_out_delay",
                 "trigger_on_powerline",
@@ -152,7 +157,7 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
         trigger_out_delay=0,
         trigger_on_powerline=False,
         powerline_trigger_delay=0,
-        use_wait_monitor=True,
+        use_wait_monitor=True
     ):
         """Narwhal Devices Pulse Generator.
 
@@ -427,9 +432,6 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
                 # it it is an ACsync wait, you have to add two instructions. The first instruction of the pulse generator must not be a powerline_sync instruction, as
                 # it will respond the moment it is loaded into memory.
 
-                # Things to fix!!!!!!!! There is some bug in the powerline delay gui spinbox that make you not be able to make a 1 ms. you can make 1.0 ms. look into it.
-                # Need to set the powerline delay at the end of programming in blacs_worker.
-
                 if len(ndpg_inst) == 0:
                     if ACsync:
                         # The first instruction can't be a powerline_sync instruction, so you actually have to add TWO instructions.
@@ -565,8 +567,8 @@ class NarwhalDevicesPulseGenerator(PseudoclockDevice):
     def write_ndpg_inst_to_h5(self, ndpg_inst, hdf5_file):
         # OK now we squeeze the instructions into a numpy array ready for writing to hdf5:
         inst_table_dtype = [('address', np.int64), ('duration', np.int64), ('goto_address', np.int64), ('goto_counter', np.int64),
-                     ('stop_and_wait', np.bool), ('hardware_trig_out', np.bool), ('notify_computer', np.bool), ('powerline_sync', np.bool),
-                     ('channel_state', np.int64, (24))]
+                     ('stop_and_wait', bool), ('hardware_trig_out', bool), ('notify_computer', bool), ('powerline_sync', bool),
+                     ('channel_state', np.int8, (24))]
         inst_table = np.empty(len(ndpg_inst),dtype = inst_table_dtype)
         for i, inst in enumerate(ndpg_inst):
             inst_table[i] = (inst['address'], inst['duration'], inst['goto_address'], inst['goto_counter'], 
