@@ -74,6 +74,13 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
     num_DO = 24
     def __init__(self,*args,**kwargs):
         DeviceTab.__init__(self,*args,**kwargs)
+        # This will be assigned the queue which is passed to the start_run method.
+        # I could just pass around the local variable, but there I have a reason to do it this way.
+        # Previously the local variable notify_queue was only passed to status_monitor when the timer
+        # called status_monitor. But status monitor couls also be called by clicking buttons, and
+        # if a "finished notification" was recieved on one of these calls, status_monitor would
+        # not have access to the notify_queue to tell labscript it is done.
+        self.notify_queue = None
 
     def initialise_workers(self):
         """Initialises the  Workers.
@@ -234,9 +241,10 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         """Starts the Pulse Generator, notifying the queue manager when
         the run is over. The notify_queue is passed to the status_monitor when it is called by this 
         timer, and it is up to the status_monitor to work out when the run is done"""
+        self.notify_queue = notify_queue
         self.statemachine_timeout_remove(self.status_monitor)
         yield(self.queue_work(self._primary_worker,'start_run'))
-        self.statemachine_timeout_add(100,self.status_monitor,notify_queue)
+        self.statemachine_timeout_add(100,self.status_monitor)
 
     #These call methods of the blacs_worker, which send signals to the device. Need to decide what to have. start_run is compulsury, the others I can choose what I like.
     ###################### Methods dealing with BLACS_tab GUI ###################################
@@ -249,7 +257,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         self.ui.label_comport.setText(f"{device_info['comport']}") 
 
     @define_state(MODE_MANUAL|MODE_BUFFERED|MODE_TRANSITION_TO_BUFFERED|MODE_TRANSITION_TO_MANUAL,True)  
-    def status_monitor(self,notify_queue=None):
+    def status_monitor(self):
         """Gets the status of the Pulse Generator from the worker.
         This is called by in three ways:
             By a timer set up when GUI is initialised, with a fairly infrequent call.
@@ -265,7 +273,7 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
                 the experiment is done.
 
         """  
-        state, powerline_state, state_extras, notifications, pg_comms_in_errors, bytesdropped_error, cease_rapid_status_checks = yield(self.queue_work(self._primary_worker,'check_status'))
+        state, powerline_state, state_extras, notifications, pg_comms_in_errors, bytesdropped_error, status_check_timer, run_aborted = yield(self.queue_work(self._primary_worker,'check_status'))
 
         if state is not None and powerline_state is not None and state_extras is not None:
             # Update UI widgets
@@ -349,8 +357,9 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
             self.ui.check_notifyfinished.blockSignals(False)
 
         # If the Pulse generator is sending lots of notifications, dont print them, and warn 
-        print_notifications = True
-        if len(notifications) > 1000:
+        if len(notifications) < 1000:
+            print_notifications = True
+        else:
             print_notifications = False
 
         finished_notification_received = False
@@ -388,25 +397,22 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # One possible way to keep all the manual controls active, is to pass the notify_queue to the reset method
         # and have that method also pass done, but not sure if that can be done, or if it is a good idea.
 
-        # An abort from buffered was used. Stop the rapid checks
-        if cease_rapid_status_checks:
+        # The run may have been aborted, or it may be a secondary pseudoclock device (secondary devices don't have their start methods called as they are started by hardware triggers)
+        if status_check_timer['modify']:
             self.statemachine_timeout_remove(self.status_monitor)
-            self.statemachine_timeout_add(1000,self.status_monitor)           
+            self.statemachine_timeout_add(status_check_timer['period'],self.status_monitor)    
 
-
-        # if notify_queue is not None or finished_notification_received:
-        #     print()
-        #     print('serial number',self.serial_number)
-        #     print('notify queue:', notify_queue)
-        #     print('finished_notification_received', finished_notification_received)
-        #     print('cease_rapid_status_checks', cease_rapid_status_checks)
-        #     print()
+        # If the run is aborted, you need to remove the queue so it doesn't hang around.
+        if run_aborted:
+            self.notify_queue = None
 
         # Run Finished successfully
-        if notify_queue is not None and finished_notification_received:
-            notify_queue.put('done')
+        if finished_notification_received:
             self.statemachine_timeout_remove(self.status_monitor)
             self.statemachine_timeout_add(1000,self.status_monitor)
+            if self.notify_queue is not None:
+                self.notify_queue.put('done')
+                self.notify_queue = None
 
 
     # I may need to somehow disable all of the buttons in and user entry widgets during the "transition_to_buffered" phase

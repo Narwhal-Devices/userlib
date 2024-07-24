@@ -56,7 +56,8 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         self.timeout_time = None
 
         # Misc other stuff 
-        self.cease_rapid_timer_status_checks_in_blacs_tabs = False
+        self.status_check_timer = {'modify': False, 'period': 1000}
+        self.run_aborted = False
 
     def start_run(self):
         # method for starting the shot via a software trigger to the device.
@@ -124,12 +125,12 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
                 bytesdropped.append(self.pg.msgin_queues['bytes_dropped'].get(block=False))
         except queue.Empty as ex:
             pass
-        # Need a way to tell the blacs_tabs.py to stop the rapid statis checks if the main abort button is pressed.
-        if self.cease_rapid_timer_status_checks_in_blacs_tabs:
-            self.cease_rapid_timer_status_checks_in_blacs_tabs = False
-            cease_rapid_status_checks = True
-        else:
-            cease_rapid_status_checks = False
+
+        # Need a way to tell the blacs_tabs.py change the frequency of status checks under certain conditions.
+        status_check_timer_local = self.status_check_timer.copy()
+        self.status_check_timer['modify'] = False
+        run_aborted_local = self.run_aborted
+        self.run_aborted = False
 
         # Check notifications for addresses corresponding to waits. Yes, this is more complex than it needs to be.
         if (self.started and self.wait_table is not None and self.current_wait < len(self.wait_table)):
@@ -157,7 +158,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
                 self.pg.write_action(trigger_now=True)
                 self.wait_timeout[self.current_wait] = True
             
-        return state, powerline_state, state_extras, notifications, pg_comms_in_errors, bytesdropped, cease_rapid_status_checks
+        return state, powerline_state, state_extras, notifications, pg_comms_in_errors, bytesdropped, status_check_timer_local, run_aborted_local
 
 
     def shutdown(self):
@@ -197,6 +198,7 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         # after the shot completes .
         print('called blacs_workers.NarwhalDevicesPulseGeneratorWorker.transition_to_buffered')
 
+        self.status_check_timer = {'modify': True, 'period': 100}
         self.started = False    # Shouldn't be needed,, but does no harm
 
         initial_channel_state = np.zeros(24, dtype=np.int8)
@@ -358,6 +360,8 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         self.started = False
         self.pg.write_device_options(accept_hardware_trigger='never')
         self.pg.write_action(reset_run=True) # Should not be required, unless the device was triggered by a hardware trigger before we could disallow it.
+        self.status_check_timer = {'modify': True, 'period': 1000}
+        self.run_aborted = True
         return True
 
     def abort_buffered(self):
@@ -368,7 +372,8 @@ class NarwhalDevicesPulseGeneratorWorker(Worker):
         self.started = False
         self.pg.write_device_options(accept_hardware_trigger='never')
         self.pg.write_action(reset_run=True)
-        self.cease_rapid_timer_status_checks_in_blacs_tabs = True
+        self.status_check_timer = {'modify': True, 'period': 1000}
+        self.run_aborted = False
         return True
 
     def check_remote_values(self):
