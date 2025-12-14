@@ -3,7 +3,9 @@ from user_devices.NarwhalDevicesPulseGenerator.labscript_devices import NarwhalD
 
 NarwhalDevicesPulseGenerator(name='NDPG0', serial_number='12582915')
 DigitalOut(name='NDPG0_DO0', parent_device=NDPG0.direct_outputs, connection='channel 0')
+DigitalOut(name='NDPG0_DO1', parent_device=NDPG0.direct_outputs, connection='channel 1')
 
+Trigger(name='test_trigger', parent_device=NDPG0.direct_outputs, connection='channel 2')
 
 
 if __name__ == '__main__':
@@ -12,15 +14,22 @@ if __name__ == '__main__':
     t = 0
     start()
     NDPG0_DO0.go_high(t)
-    t += 40E-9
-    t += 4
+    NDPG0_DO1.go_high(t)
+    t += 1.5
+    
+    NDPG0_DO0.go_low(t)
+    t += 0.5
 
-    # I THINK THERE IS A BUG IN THE FPGA CODE THAT RESETS THE RUN TIME TO ZERO AT THE END OF THE RUN, BUT THEN KEEPS IT COUNTING?
-    # THE IS WHAT IT LOOKS LIKE FROM BLLOKNG AT THE BLACS TAB AT THE END OF THE RUN. IT RESETS TO ZERO THEN KEEPS COUNTING.
+    NDPG0_DO0.go_high(t)
+    t += 1
+
+    test_trigger.trigger(t, 15E-3)
+    t += 0.25
 
     # t += wait('ACsync_my_test_wait', t, timeout = 2)
-    NDPG0_DO0.go_low(t)
 
+    NDPG0_DO0.go_low(t)
+    NDPG0_DO1.go_low(t)
     
     # t += wait('hardware_trig_test', t, timeout = 2)
     # NDPG0_DO0.go_high(t) 

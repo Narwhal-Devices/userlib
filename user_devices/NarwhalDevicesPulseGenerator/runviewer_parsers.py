@@ -51,8 +51,10 @@ class NarwhalDevicesPulseGeneratorParser(object):
         and parent_device_name and connection are strings specifying the relationship between the
         trace and the device. 
         '''
-        print('here is the clock variable')
-        print(clock)
+        print()
+        print(f'Device name: {self.device.name}')
+        print(f'clock variable: {clock}')
+        print()
 
         # If not the master pseudoclock, then I need to handle the case of getting
         # possibly multiple triggers. Ignore for now though.
@@ -67,8 +69,12 @@ class NarwhalDevicesPulseGeneratorParser(object):
             self.trigger_delay = device_props["trigger_delay"]
             self.wait_delay = device_props["wait_delay"]
 
+            print('device_props:')
             print(device_props)
+            print()
+            print('connection properties')
             print(conn_props)
+            print()
 
             instructions = file[f"devices/{self.name}/PULSE_PROGRAM"][:]
 
@@ -113,41 +119,42 @@ class NarwhalDevicesPulseGeneratorParser(object):
             else:
                 instruction['goto_counter'] -= 1
                 address = instruction['goto_address']
-        
-        durations.insert(0, 0)  # we want time to start at zero
-        channel_states.insert(0, channel_states[-1]) # The outputs will ususally begin in same state that they end in
-        stop_and_wait.insert(0, False)
-        powerline_sync.insert(0, False)
-        # I need to do more than this.
-        # I need to make sure that at every change there is a data poiny on both sides
-        # otherwise the graph will go up at an angle
 
+        if clock is not None:
+            # Compute the times of the clock rising edges
+            clock_times, clock_value = clock[0], clock[1]
+            differences = np.diff(clock_value, prepend=0)  # Prepend 0 to ensure the first state is evaluated correctly
+            rising_edges = np.where(differences == 1)[0]  # Get indices where a rising edge occurs
+            rising_edge_times = clock_times[rising_edges]
+            print("I need to deal with this, like I have to add the clock delay or something")
+            print("there should be one rising edge for the initial start, plus one for every wait")
+            print("actually, there could be lots, but al are ignored unless they are at the start or during a wait")
+            raise Exception("need to do this")
+
+
+        # "times" start at zero, so prepending a 0 duration element makes things plot correctly
+        durations.insert(0, 0)
+        # At every "times" entry, the plot goes to the level indicated in the "states" array, and then stays there until the next entry
+        # Need to add entries so they are the same length as "times"
+        channel_states.append(channel_states[-1])
+        stop_and_wait.append(False)
+        powerline_sync.append(False)
 
         channel_states = np.array(channel_states)
         durations = np.array(durations) * self.clock_resolution
         stop_and_wait = np.array(stop_and_wait)
         powerline_sync = np.array(powerline_sync)
 
-
         times = np.cumsum(durations)
-        # I need to do more than this.
-        # I need to make sure that at every change there is a data poiny on both sides
-        # otherwise the graph will go up at an angle
 
-        # goto_counter = []
-        # goto_counter_original = []
-        # hard_trig_out = np.array(hard_trig_out)
-        # notify_computer = np.array(notify_computer)
+        # print(durations)
+        # print(times)
+        # print(channel_states)
+        # print(channel_states.shape)
+        # print(stop_and_wait)
+        # print(powerline_sync)
 
-
-        print(durations)
-        print(times)
-        print(channel_states)
-        print(channel_states.shape)
-        print(stop_and_wait)
-        print(powerline_sync)
-
-
+        clocklines_and_triggers = {}
         # Start by getting all the direct output devices, but then need to do any additional clocklines
         name = self.device.name
         pseudoclock = self.device.child_list[f'{name}_pseudoclock']
@@ -155,55 +162,88 @@ class NarwhalDevicesPulseGeneratorParser(object):
         # Do direcet output device
         direct_output_device = pseudoclock.child_list[f'{name}_direct_output_clock_line'].child_list[f'{name}_direct_output_device']
         
+        print()
+        print('UPTO HERE!! For whatever reason, in the simple experimet I sucessfully iteratet over ndpg ch0, 1,but for whatever reason when there are two ndpgs not all the first k')
+        print()
+
+        print('Direct output name, channel')
         for direct_output_name, direct_output in direct_output_device.child_list.items():
             direct_output_channel = int(direct_output.parent_port.split()[1])
-            print(direct_output_name)
-            print(direct_output_channel)
-            add_trace(direct_output_name, (times, channel_states[:, direct_output_channel]), self.device.name, direct_output.parent_port)
+            print(direct_output_name, direct_output_channel)
+            print()
+            direct_output_states = channel_states[:, direct_output_channel]
+            add_trace(direct_output_name, (times, direct_output_states), self.device.name, direct_output.parent_port)
+            # print(vars(direct_output))
+            # print()
+            print('times')
+            print(times)
+            print('states')
+            print(direct_output_states)
+            print()
+            if direct_output.device_class == 'Trigger':
+                # Extract only the times when this trigger changes
+                # Find indices where the state changes
+                changes = np.where(np.diff(direct_output_states) != 0)[0]
+                # Add 1 because np.diff gives the index of the first element of the pair where the change occurs
+                indices_to_keep = changes + 1
+                # Always include the first element
+                indices_to_keep = np.insert(indices_to_keep, 0, 0)
+                # Filter the times and states arrays
+                filtered_times = times[indices_to_keep]
+                filtered_direct_output_states = direct_output_states[indices_to_keep]
+                clocklines_and_triggers[direct_output_name] = (filtered_times, filtered_direct_output_states)
 
         # now do additional clocklines
 
 
-        print('self.device')
-        print(self.device.name)
-        print(vars(self.device))
+        # print('self.device')
+        # print(self.device.name)
+        # print(vars(self.device))
 
 
-        print('self.device.child_list')
-        print(self.device.child_list) # A dictionary of pseudoclocks (the actual speudoclock and the dummy waitmonitor one)
+        # print('self.device.child_list')
+        # print(self.device.child_list) # A dictionary of pseudoclocks (the actual speudoclock and the dummy waitmonitor one)
 
-        connection_NDPG0_pseudoclock = self.device.child_list['NDPG0_pseudoclock']
+        # connection_NDPG0_pseudoclock = self.device.child_list['NDPG0_pseudoclock']
 
-        print('connection_NDPG0_pseudoclock')       
-        print(connection_NDPG0_pseudoclock)        
-        print(vars(connection_NDPG0_pseudoclock))
+        # # print('connection_NDPG0_pseudoclock')       
+        # # print(connection_NDPG0_pseudoclock)        
+        # # print(vars(connection_NDPG0_pseudoclock))
         
-        NDPG0_direct_output_clock_line = connection_NDPG0_pseudoclock.child_list['NDPG0_direct_output_clock_line']
+        # NDPG0_direct_output_clock_line = connection_NDPG0_pseudoclock.child_list['NDPG0_direct_output_clock_line']
 
-        print('NDPG0_direct_output_clock_line')        
-        print(NDPG0_direct_output_clock_line)        
-        print(vars(NDPG0_direct_output_clock_line))
+        # # print('NDPG0_direct_output_clock_line')        
+        # # print(NDPG0_direct_output_clock_line)        
+        # # print(vars(NDPG0_direct_output_clock_line))
         
-        NDPG0_direct_output_device = NDPG0_direct_output_clock_line.child_list['NDPG0_direct_output_device']
+        # NDPG0_direct_output_device = NDPG0_direct_output_clock_line.child_list['NDPG0_direct_output_device']
         
-        print('NDPG0_direct_output_device')
-        print(NDPG0_direct_output_device)
-        print(vars(NDPG0_direct_output_device))
+        # print('NDPG0_direct_output_device')
+        # # print(NDPG0_direct_output_device)
+        # print(vars(NDPG0_direct_output_device))
 
-        NDPG0_DO0 = NDPG0_direct_output_device.child_list['NDPG0_DO0']
+        # NDPG0_DO0 = NDPG0_direct_output_device.child_list['NDPG0_DO0']
         
-        print('NDPG0_DO0')
-        print(NDPG0_DO0)
-        print(vars(NDPG0_DO0))
+        # print('NDPG0_DO0')
+        # # print(NDPG0_DO0)
+        # print(vars(NDPG0_DO0))
 
-        physical_connection = NDPG0_DO0.parent_port
-        print('hoop')
-        print(physical_connection)
+        # test_trigger = NDPG0_direct_output_device.child_list['test_trigger']
+        
+        # print('test_trigger')
+        # # print(NDPG0_DO0)
+        # print(vars(test_trigger))
+
+        # physical_connection = NDPG0_DO0.parent_port
+        # print('hoop')
+        # print(physical_connection)
 
         # add_trace(name, trace, parent_device_name, connection)
         
-        clocklines_and_triggers = {}
+        # clocklines_and_triggers = {}
         # return np.array(durations, dtype=int), np.array(states, dtype=int), np.array(instruction_address, dtype=int), np.array(goto_counter, dtype=int), np.array(goto_counter_original, dtype=int), np.array(stop_and_wait, dtype=bool), np.array(hard_trig_out, dtype=bool), np.array(notify_computer, dtype=bool), np.array(powerline_sync, dtype=bool)
 
-
+        print('clocklines_and_triggers')
+        print(clocklines_and_triggers)
+        print()
         return clocklines_and_triggers
