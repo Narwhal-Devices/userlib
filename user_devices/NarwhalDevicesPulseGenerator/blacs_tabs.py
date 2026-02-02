@@ -210,7 +210,8 @@ class NarwhalDevicesPulseGeneratorTab(DeviceTab):
         # This is a direct output, let's search for it on the internal intermediate device called NarwhalDevicesPulseGeneratorDirectOutputs
         if parent_device_name == self.device_name:
             device = self.connection_table.find_by_name(self.device_name)
-            pseudoclock = device.child_list[list(device.child_list.keys())[0]] # there should always be one (and only one) child, the Pseudoclock
+            children = device.child_list.values()
+            pseudoclock = [c for c in children if c.parent_port == 'clock'][0]
             clockline = None
             for child_name, child in pseudoclock.child_list.items():
                 # store a reference to the internal clockline
